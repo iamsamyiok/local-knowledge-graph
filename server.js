@@ -10,6 +10,7 @@ const agent = require('./lib/agent');
 const V = require('./lib/validator');
 const inference = require('./lib/inference');
 const embeddings = require('./lib/embeddings');
+const importer = require('./lib/importer');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -237,44 +238,15 @@ api.post('/graph/import', (req, res) => {
   if (!content_b64) return res.status(400).json({ error: '必须提供图谱数据库文件(content_b64)' });
   let buf;
   try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'content_b64不是合法的base64' }); }
-  if (!buf.length || buf.length > 200 * 1024 * 1024) return res.status(400).json({ error: '文件为空或超过200MB上限' });
-  if (!/^SQLite format 3\x00/.test(buf.toString('latin1', 0, 16))) return res.status(400).json({ error: '该文件不是SQLite数据库' });
 
-  // 临时库校验：完整性 + 必需表结构
+  // 临时库校验：完整性 + 必需表 + 必需列（lib/importer.js）
   const os = require('os');
+  const check = importer.validateImportBuffer(buf);
+  if (!check.ok) return res.status(400).json({ error: check.error });
+  const importedMaxLog = check.importedMaxLog;
+  const counts = check.counts;
   const tmp = path.join(os.tmpdir(), `kg_import_${Date.now()}.db`);
   fs.writeFileSync(tmp, buf);
-  const { DatabaseSync } = require('node:sqlite');
-  let probe, importedMaxLog = 0, counts;
-  try {
-    probe = new DatabaseSync(tmp);
-    const v = Object.values(probe.prepare('PRAGMA integrity_check').get())[0];
-    if (v !== 'ok') return res.status(400).json({ error: `数据库完整性校验失败: ${v}` });
-    const tables = probe.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
-    for (const t of ['entities', 'relations', 'operation_logs']) {
-      if (!tables.includes(t)) return res.status(400).json({ error: `缺少必需的数据表 ${t}，这不是本系统的图谱文件` });
-    }
-    // 列齐全校验：防止残缺schema的库导入后运行期才出错
-    const REQUIRED_COLS = {
-      entities: ['id', 'name', 'category', 'attributes', 'source', 'created_at'],
-      relations: ['id', 'source_id', 'target_id', 'name', 'category', 'created_at'],
-      operation_logs: ['id', 'action', 'entity_id', 'relation_id', 'detail', 'source', 'created_at'],
-    };
-    for (const [t, cols] of Object.entries(REQUIRED_COLS)) {
-      const actual = probe.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
-      const missing = cols.filter((c) => !actual.includes(c));
-      if (missing.length) return res.status(400).json({ error: `表 ${t} 缺少必需字段: ${missing.join(', ')}` });
-    }
-    importedMaxLog = probe.prepare('SELECT COALESCE(MAX(id),0) AS m FROM operation_logs').get().m;
-    counts = {
-      entities: probe.prepare('SELECT COUNT(*) AS c FROM entities').get().c,
-      relations: probe.prepare('SELECT COUNT(*) AS c FROM relations').get().c,
-    };
-  } catch (e) {
-    return res.status(400).json({ error: '无法读取图谱数据库: ' + e.message });
-  } finally {
-    try { if (probe) probe.close(); } catch (_) {}
-  }
 
   // 当前数据自动备份保存点，再替换主库
   let backup = null;
@@ -284,8 +256,8 @@ api.post('/graph/import', (req, res) => {
   fs.unlinkSync(tmp);
   git.writeMeta({ last_saved_log: importedMaxLog }); // 日志区间绑定基准与导入库对齐
   db.reopen();
-  const check = db.integrityCheck();
-  if (!check.ok) { const e = new Error('导入后完整性校验失败: ' + check.detail); e.status = 500; throw e; }
+  const checkAfter = db.integrityCheck();
+  if (!checkAfter.ok) { const e = new Error('导入后完整性校验失败: ' + checkAfter.detail); e.status = 500; throw e; }
 
   res.json({ ok: true, counts: db.counts(), imported: { entities: counts.entities, relations: counts.relations }, backup_short: backup && backup.hash ? backup.hash : null });
 });

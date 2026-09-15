@@ -1,0 +1,24 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+      - name: 语法检查
+        run: |
+          node --check server.js
+          node --check mcp/server.js
+          for f in lib/*.js tools/*.js; do node --check "$f"; done
+      - name: 核心链路测试
+        run: npm test

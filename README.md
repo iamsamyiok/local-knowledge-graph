@@ -53,7 +53,7 @@ vendor/              three.js 本地副本（全离线）
 
 - `entities(id, name, category, attributes, source, created_at)` — category 枚举：物理实体/抽象实体/数值实体/时间实体，attributes 为扁平 JSON
 - `relations(id, source_id, target_id, name, category, created_at)` — category 枚举：归属/空间/时间/互动/属性
-- `operation_logs(id, action, entity_id, relation_id, detail, source, created_at)` — 全部写入留痕
+- `operation_logs(id, op_type, snapshot, source, created_at)` — 全部写入留痕，snapshot 为操作前后JSON快照
 - `entity_images` / `entity_embeddings` — 图片与向量资产，不进入图谱保存点语义
 
 ## API 一览（http://localhost:3000/api）

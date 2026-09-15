@@ -136,6 +136,73 @@ api.get('/export/rdf', (req, res) => {
   res.send(ttl);
 });
 
+// ---------- 文件：图谱保存/打开/另存 ----------
+api.get('/export/db', (req, res) => {
+  const raw = String(req.query.name || '').trim().replace(/[\\/:*?"<>|]/g, '_') || 'kg.db';
+  const name = /\.(db|sqlite|sqlite3)$/i.test(raw) ? raw : raw.replace(/\.[^.]*$/, '') + '.db';
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(name)}`);
+  res.setHeader('Content-Type', 'application/octet-stream');
+  res.send(fs.readFileSync(db.DB_PATH)); // 写操作均经事务提交，主库文件始终处于一致状态
+});
+
+api.post('/graph/import', (req, res) => {
+  const { filename, content_b64 } = req.body || {};
+  if (!content_b64) return res.status(400).json({ error: '必须提供图谱数据库文件(content_b64)' });
+  let buf;
+  try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'content_b64不是合法的base64' }); }
+  if (!buf.length || buf.length > 200 * 1024 * 1024) return res.status(400).json({ error: '文件为空或超过200MB上限' });
+  if (!/^SQLite format 3\x00/.test(buf.toString('latin1', 0, 16))) return res.status(400).json({ error: '该文件不是SQLite数据库' });
+
+  // 临时库校验：完整性 + 必需表结构
+  const os = require('os');
+  const tmp = path.join(os.tmpdir(), `kg_import_${Date.now()}.db`);
+  fs.writeFileSync(tmp, buf);
+  const { DatabaseSync } = require('node:sqlite');
+  let probe, importedMaxLog = 0, counts;
+  try {
+    probe = new DatabaseSync(tmp);
+    const v = Object.values(probe.prepare('PRAGMA integrity_check').get())[0];
+    if (v !== 'ok') return res.status(400).json({ error: `数据库完整性校验失败: ${v}` });
+    const tables = probe.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+    for (const t of ['entities', 'relations', 'operation_logs']) {
+      if (!tables.includes(t)) return res.status(400).json({ error: `缺少必需的数据表 ${t}，这不是本系统的图谱文件` });
+    }
+    importedMaxLog = probe.prepare('SELECT COALESCE(MAX(id),0) AS m FROM operation_logs').get().m;
+    counts = {
+      entities: probe.prepare('SELECT COUNT(*) AS c FROM entities').get().c,
+      relations: probe.prepare('SELECT COUNT(*) AS c FROM relations').get().c,
+    };
+  } catch (e) {
+    return res.status(400).json({ error: '无法读取图谱数据库: ' + e.message });
+  } finally {
+    try { if (probe) probe.close(); } catch (_) {}
+  }
+
+  // 当前数据自动备份保存点，再替换主库
+  let backup = null;
+  try { backup = git.savepoint(`打开图谱前自动备份 ${new Date().toLocaleString('zh-CN')}`, '系统'); } catch (_) { backup = null; }
+
+  fs.copyFileSync(tmp, db.DB_PATH);
+  fs.unlinkSync(tmp);
+  git.writeMeta({ last_saved_log: importedMaxLog }); // 日志区间绑定基准与导入库对齐
+  db.reopen();
+  const check = db.integrityCheck();
+  if (!check.ok) { const e = new Error('导入后完整性校验失败: ' + check.detail); e.status = 500; throw e; }
+
+  res.json({ ok: true, counts: db.counts(), imported: { entities: counts.entities, relations: counts.relations }, backup_short: backup && backup.hash ? backup.hash : null });
+});
+
+// ---------- 另存为图谱网页（单文件只读查看器） ----------
+api.get('/export/html', (req, res) => {
+  const viewer = require('./lib/viewer');
+  const html = viewer.buildViewerHtml(db.getGraph());
+  const raw = String(req.query.name || '').trim();
+  const name = /[\\/:*?"<>|]/.test(raw) || !raw ? 'kg-viewer.html' : raw;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename*=UTF-8''${encodeURIComponent(/\.html?$/i.test(name) ? name : name + '.html')}`);
+  res.send(html);
+});
+
 // ---------- Git保存点与回溯 ----------
 api.get('/git/history', (req, res) => res.json(git.history(Number(req.query.limit) || 100)));
 api.post('/git/savepoint', (req, res) => {

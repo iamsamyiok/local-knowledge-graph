@@ -196,6 +196,41 @@
   .ver-item .v2 { font-size: 11px; color: #b6c6e2; margin: 4px 0; }
   .ver-item .v3 { font-size: 10px; color: #67799c; }
 
+  /* ================= 视图样式自定义面板（桌面） ================= */
+  #btn-style { display: inline-block; }
+  #style-panel {
+    position: absolute; top: 12px; right: 12px; width: 288px; max-height: calc(100% - 24px);
+    overflow-y: auto; display: none; z-index: 22;
+    background: rgba(13,20,36,.96); border: 1px solid #2a3a5c; border-radius: 8px; padding: 12px;
+  }
+  #style-panel.show { display: block; }
+  #style-panel h4 { color: #7fd1ff; font-size: 13px; margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center; }
+  #style-panel h4 span { cursor: pointer; color: #8fa3c0; font-size: 15px; }
+  .style-sec { font-size: 11px; color: #9fb6d9; margin: 10px 0 4px; font-weight: 600; }
+  .style-row { display: flex; align-items: center; gap: 6px; margin: 5px 0; font-size: 11px; }
+  .style-row .sname { width: 58px; color: #d7dee9; flex-shrink: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .style-row input[type="color"] { width: 34px; padding: 1px; height: 26px; flex: none; }
+  .style-row input[type="number"], .style-row input[type="range"] { width: 58px; flex: none; padding: 3px 5px; }
+  .style-row input[type="range"] { width: 64px; }
+  .style-row label.ck { display: flex; align-items: center; gap: 3px; color: #8fa3c0; margin: 0; cursor: pointer; }
+  .style-row label.ck input { width: auto; }
+  #style-panel .hint-text { margin-top: 8px; }
+
+  /* ================= 文件菜单（手机端） ================= */
+  #file-menu {
+    position: fixed; top: 46px; right: 8px; z-index: 45; display: none;
+    background: #101a30; border: 1px solid #2a3a5c; border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(0,0,0,.5); min-width: 172px; overflow: hidden;
+  }
+  #file-menu.show { display: block; }
+  #file-menu button {
+    display: block; width: 100%; text-align: left; background: transparent;
+    border: none; border-bottom: 1px solid #16213a; border-radius: 0;
+    padding: 11px 14px; font-size: 13px; color: #cfe2ff; min-height: 42px;
+  }
+  #file-menu button:last-child { border-bottom: none; }
+  #file-menu button:active { background: #1b2b4d; }
+
   /* ================= 平板/小屏桌面适配（769px-1100px） ================= */
   @media (min-width: 769px) and (max-width: 1100px) {
     header { padding: 0 10px; gap: 8px; }
@@ -210,17 +245,18 @@
   /* ================= 手机端适配 ================= */
   @media (max-width: 768px) {
     .m-btn { display: inline-block; background: #16233f; }
+    #btn-style { display: none; }
+    #style-panel { display: none !important; }
+
+    /* 隐藏大标题，所有功能按钮单行排布，最大化画布显示范围 */
     header {
-      flex-wrap: wrap; height: auto; min-height: 46px;
-      padding: 6px 8px; gap: 6px; row-gap: 6px;
+      flex-wrap: nowrap; height: 44px; padding: 0 6px; gap: 4px;
+      overflow: hidden;
     }
-    header h1 {
-      font-size: 12.5px; letter-spacing: 0; max-width: 90px;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-    }
-    header button { padding: 5px 9px; font-size: 11px; }
-    #agent-badge { display: none; }
-    #stat-badge { font-size: 10px; padding: 2px 7px; }
+    header h1 { display: none; }
+    header button { padding: 5px 7px; font-size: 11px; flex-shrink: 0; min-width: 0; }
+    #btn-export { display: none; } /* 导出RDF移入文件菜单 */
+    #stat-badge, #agent-badge { display: none; }
 
     /* 左右面板变为抽屉 */
     .panel {
@@ -274,8 +310,10 @@
     <button id="m-right" class="m-btn" title="打开AI对话">AI</button>
     <button id="btn-savepoint" title="将当前合规数据提交为Git保存点（仅存差异）">打保存点</button>
     <button id="btn-export" title="导出标准RDF(Turtle)格式文件">导出RDF</button>
-    <button id="btn-relayout">重新布局</button>
-    <button id="btn-resetview">重置视角</button>
+    <button id="btn-relayout" title="重新进行力导向布局">重新布局</button>
+    <button id="btn-resetview" title="重置相机视角">重置视角</button>
+    <button id="btn-style" title="自定义实体/关系的颜色、大小与线型">视图设置</button>
+    <button id="m-file" class="m-btn" title="文件：打开/保存/另存">文件</button>
   </header>
 
   <main>
@@ -350,6 +388,7 @@
         <div class="ego-hint">清空层数输入框 = 显示全部层级；层级光圈颜色随跳数递进</div>
       </div>
       <div id="info-card"></div>
+      <div id="style-panel"></div>
       <div id="empty-hint" style="display:none">暂无数据<br>在左侧添加实体，或在右侧让 OpenCode 联网补全</div>
     </div>
 
@@ -376,6 +415,14 @@
 </div>
 <div id="backdrop"></div>
 <div id="toast"></div>
+<div id="file-menu">
+  <button id="fm-open">打开图谱</button>
+  <button id="fm-save">保存图谱</button>
+  <button id="fm-saveas">另存为图谱</button>
+  <button id="fm-savehtml">另存为图谱网页</button>
+  <button id="fm-rdf">导出 RDF</button>
+</div>
+<input type="file" id="db-file-input" accept=".db,.sqlite,.sqlite3" style="display:none">
 <div id="lightbox">
   <button class="lb-close" id="lb-close" title="关闭">x</button>
   <figure>
@@ -401,10 +448,11 @@ const state = {
   entityMap: new Map(),
   version: -1,
   editingEntityId: null,
-  selected: null,          // {type:'entity'|'relation', id}
+  selected: null,          // {type:'entity'|'relation'|'inferred', id}
   ego: null,               // {centerId, depth: null=全部|正整数} 中心层级模式
   imageCounts: new Map(),  // entityId -> 图片数量
   entityImages: new Map(), // entityId -> [图片行]
+  meta: null,              // /api/meta 缓存（图例与下拉框用）
 };
 
 const $ = (id) => document.getElementById(id);
@@ -419,18 +467,64 @@ function toast(msg, isErr) {
 
 /* ================= 常量样式映射 ================= */
 const ENTITY_STYLE = {
-  '物理实体': { color: 0x4fc3f7, css: '#4fc3f7', shape: '实心球' },
-  '抽象实体': { color: 0xba68c8, css: '#ba68c8', shape: '线框球' },
-  '数值实体': { color: 0x81c784, css: '#81c784', shape: '立方体' },
-  '时间实体': { color: 0xffb74d, css: '#ffb74d', shape: '圆环' },
+  '物理实体': { color: 0x4fc3f7, css: '#4fc3f7', shape: '实心球', size: 1 },
+  '抽象实体': { color: 0xba68c8, css: '#ba68c8', shape: '线框球', size: 1 },
+  '数值实体': { color: 0x81c784, css: '#81c784', shape: '立方体', size: 1 },
+  '时间实体': { color: 0xffb74d, css: '#ffb74d', shape: '圆环', size: 1 },
 };
 const RELATION_STYLE = {
-  '空间': { color: 0x4caf50, css: '#4caf50', dashed: false },
-  '互动': { color: 0xf44336, css: '#f44336', dashed: true },
-  '归属': { color: 0x2196f3, css: '#2196f3', dashed: false },
-  '时间': { color: 0xffc107, css: '#ffc107', dashed: true },
-  '属性': { color: 0x9c27b0, css: '#9c27b0', dashed: false },
+  '空间': { color: 0x4caf50, css: '#4caf50', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '互动': { color: 0xf44336, css: '#f44336', dashed: true, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '归属': { color: 0x2196f3, css: '#2196f3', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '时间': { color: 0xffc107, css: '#ffc107', dashed: true, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '属性': { color: 0x9c27b0, css: '#9c27b0', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
 };
+
+/* ================= 主题自定义（视图设置面板持久化） ================= */
+const ENTITY_STYLE_BASE = JSON.parse(JSON.stringify(ENTITY_STYLE));
+const RELATION_STYLE_BASE = JSON.parse(JSON.stringify(RELATION_STYLE));
+const THEME_KEY = 'kg_theme_v1';
+const THEME_SIZE_MIN = 0.5, THEME_SIZE_MAX = 2.2;
+
+function hexToInt(h) { return parseInt(String(h).replace('#', ''), 16) || 0x888888; }
+function clampThemeSize(v) { return Math.min(THEME_SIZE_MAX, Math.max(THEME_SIZE_MIN, Number(v) || 1)); }
+function loadTheme() { try { return JSON.parse(localStorage.getItem(THEME_KEY)); } catch (_) { return null; } }
+
+function applyTheme(t) {
+  if (!t) return false;
+  try {
+    for (const cat of Object.keys(ENTITY_STYLE_BASE)) {
+      const o = t.entity && t.entity[cat];
+      if (!o) continue;
+      ENTITY_STYLE[cat].css = o.color;
+      ENTITY_STYLE[cat].color = hexToInt(o.color);
+      ENTITY_STYLE[cat].size = clampThemeSize(o.size);
+    }
+    for (const cat of Object.keys(RELATION_STYLE_BASE)) {
+      const o = t.relation && t.relation[cat];
+      if (!o) continue;
+      RELATION_STYLE[cat].css = o.color;
+      RELATION_STYLE[cat].color = hexToInt(o.color);
+      RELATION_STYLE[cat].dashed = !!o.dashed;
+      RELATION_STYLE[cat].dashSize = Math.max(1, Number(o.dashSize) || 6);
+      RELATION_STYLE[cat].gapSize = Math.max(1, Number(o.gapSize) || 4);
+      RELATION_STYLE[cat].opacity = Math.min(1, Math.max(0.15, Number(o.opacity) || 0.9));
+    }
+    return true;
+  } catch (_) { return false; }
+}
+
+function resetThemeToBase() {
+  for (const k of Object.keys(ENTITY_STYLE)) Object.assign(ENTITY_STYLE[k], ENTITY_STYLE_BASE[k]);
+  for (const k of Object.keys(RELATION_STYLE)) Object.assign(RELATION_STYLE[k], RELATION_STYLE_BASE[k]);
+}
+
+function currentThemeJson() {
+  return {
+    entity: Object.fromEntries(Object.entries(ENTITY_STYLE).map(([k, v]) => [k, { color: v.css, size: v.size }])),
+    relation: Object.fromEntries(Object.entries(RELATION_STYLE).map(([k, v]) => [k, { color: v.css, dashed: v.dashed, dashSize: v.dashSize, gapSize: v.gapSize, opacity: v.opacity }])),
+  };
+}
 // 中心层级模式：层级光圈配色（L0中心金色双环，L1起按层递进，超出循环）
 const LEVEL_COLORS = ['#ffd75f', '#7ee787', '#58a6ff', '#d2a8ff', '#ffa657', '#ff7b72', '#e3b341'];
 const levelColor = (lv) => LEVEL_COLORS[Math.min(lv, LEVEL_COLORS.length - 1)];
@@ -553,6 +647,7 @@ function buildNodeMesh(category) {
       new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.35, metalness: 0.15 }));
   }
   mesh.userData.category = category;
+  mesh.scale.setScalar(ENTITY_STYLE[category].size || 1);
   return mesh;
 }
 
@@ -611,7 +706,7 @@ function rebuildGraph() {
     labelGroup.add(label);
 
     state.entityMap.set(e.id, { entity: e, mesh, label, attrs, level: sub ? e.level : null });
-    simNodes.push({ id: e.id, pos: mesh.position.clone(), vel: new THREE.Vector3(), mesh, label, radius: 10 });
+    simNodes.push({ id: e.id, pos: mesh.position.clone(), vel: new THREE.Vector3(), mesh, label, radius: 10, sizeScale: ENTITY_STYLE[e.category] ? (ENTITY_STYLE[e.category].size || 1) : 1 });
   });
 
   rels.forEach((r) => {
@@ -620,14 +715,16 @@ function rebuildGraph() {
     if (!a || !b) return;
     const st = RELATION_STYLE[r.category] || { color: 0x999999, dashed: false };
     const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
+    const op = st.opacity === undefined ? 0.9 : st.opacity;
     const mat = st.dashed
-      ? new THREE.LineDashedMaterial({ color: st.color, dashSize: 6, gapSize: 4, transparent: true, opacity: 0.9 })
-      : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: 0.9 });
+      ? new THREE.LineDashedMaterial({ color: st.color, dashSize: st.dashSize || 6, gapSize: st.gapSize || 4, transparent: true, opacity: op })
+      : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: op });
     const line = new THREE.Line(geo, mat);
     line.userData.relationId = r.id;
     linkGroup.add(line);
     const mid = a.pos.clone().add(b.pos).multiplyScalar(0.5);
-    const lbl = makeLabelSprite(r.category, st.css, 24);
+    // 线标注显示具体关系名（如"父子"），线型/颜色仍由大类规定
+    const lbl = makeLabelSprite(r.name, st.css, 24);
     lbl.position.copy(mid);
     labelGroup.add(lbl);
     simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
@@ -685,11 +782,15 @@ function simStep() {
 function animate() {
   requestAnimationFrame(animate);
   if (simBudget > 0) { simStep(); simBudget--; }
-  // 选中实体呼吸高亮
-  for (const nd of simNodes) nd.mesh.scale.setScalar(1);
+  // 选中实体呼吸高亮（叠加自定义尺寸系数）
+  for (const nd of simNodes) nd.mesh.scale.setScalar(nd.sizeScale || 1);
   if (state.selected && state.selected.type === 'entity') {
     const m = state.entityMap.get(state.selected.id);
-    if (m) m.mesh.scale.setScalar(1.25 + 0.08 * Math.sin(Date.now() / 300));
+    if (m) {
+      const nd = simNodes.find((n) => n.id === state.selected.id);
+      const base = (nd && nd.sizeScale) || 1;
+      m.mesh.scale.setScalar(base * (1.25 + 0.08 * Math.sin(Date.now() / 300)));
+    }
   }
   controls.update();
   renderer.render(scene, camera);
@@ -986,9 +1087,16 @@ async function api(url, opts) {
 }
 
 function fillCategorySelects(meta) {
+  state.meta = meta;
   const eSel = $('e-category'), rSel = $('r-category');
   eSel.innerHTML = meta.entity_categories.map((c) => `<option value="${c}">${c}（${ENTITY_STYLE[c].shape}）</option>`).join('');
   rSel.innerHTML = meta.relation_categories.map((c) => `<option value="${c}">${c}关系</option>`).join('');
+  renderLegend();
+}
+
+function renderLegend() {
+  const meta = state.meta;
+  if (!meta) return;
   $('legend').innerHTML = '<b>实体样式</b><br>' +
     meta.entity_categories.map((c) => `<span class="sw" style="background:${ENTITY_STYLE[c].css}"></span>${c} · ${ENTITY_STYLE[c].shape}`).join('<br>') +
     '<br><b>关系线型</b><br>' +
@@ -1268,6 +1376,142 @@ async function sendAgent() {
     $('agent-send').disabled = false;
   }
 }
+
+/* ================= 视图设置面板（主题自定义，桌面端） ================= */
+function renderStylePanel() {
+  const p = $('style-panel');
+  const entRows = Object.keys(ENTITY_STYLE).map((c) => `
+    <div class="style-row">
+      <span class="sname">${c}</span>
+      <input type="color" data-sec="entity" data-cat="${c}" data-key="color" value="${ENTITY_STYLE[c].css}">
+      <input type="number" data-sec="entity" data-cat="${c}" data-key="size" min="${THEME_SIZE_MIN}" max="${THEME_SIZE_MAX}" step="0.1" value="${ENTITY_STYLE[c].size}" title="大小倍率">
+      <span style="color:#5c6f92">倍率</span>
+    </div>`).join('');
+  const relRows = Object.keys(RELATION_STYLE).map((c) => `
+    <div class="style-row">
+      <span class="sname">${c}</span>
+      <input type="color" data-sec="relation" data-cat="${c}" data-key="color" value="${RELATION_STYLE[c].css}">
+      <label class="ck"><input type="checkbox" data-sec="relation" data-cat="${c}" data-key="dashed" ${RELATION_STYLE[c].dashed ? 'checked' : ''}>虚线</label>
+      <input type="number" data-sec="relation" data-cat="${c}" data-key="dashSize" min="1" step="1" value="${RELATION_STYLE[c].dashSize}" title="虚线段长">
+      <input type="number" data-sec="relation" data-cat="${c}" data-key="gapSize" min="1" step="1" value="${RELATION_STYLE[c].gapSize}" title="虚线间隔">
+      <input type="range" data-sec="relation" data-cat="${c}" data-key="opacity" min="0.15" max="1" step="0.05" value="${RELATION_STYLE[c].opacity}" title="不透明度">
+    </div>`).join('');
+  p.innerHTML = `
+    <h4>视图设置<span id="style-close" title="关闭">x</span></h4>
+    <div class="style-sec">实体 · 颜色 / 大小倍率</div>${entRows}
+    <div class="style-sec">关系 · 颜色 / 虚线 / 段长 / 间隔 / 不透明度</div>${relRows}
+    <div class="row">
+      <button class="primary" id="style-save">保存主题</button>
+      <button class="ghost" id="style-reset">恢复默认</button>
+    </div>
+    <div class="hint-text">修改即时生效并应用于3D画布与图例；「保存主题」写入浏览器本地存储。受WebGL限制线宽恒为1px，虚线可通过段长/间隔调节密度。</div>`;
+  $('style-close').addEventListener('click', () => $('style-panel').classList.remove('show'));
+  $('style-save').addEventListener('click', () => {
+    localStorage.setItem(THEME_KEY, JSON.stringify(currentThemeJson()));
+    toast('主题已保存到本地');
+  });
+  $('style-reset').addEventListener('click', () => {
+    localStorage.removeItem(THEME_KEY);
+    resetThemeToBase();
+    renderLegend();
+    renderStylePanel();
+    rebuildGraph();
+    toast('已恢复默认样式');
+  });
+  p.querySelectorAll('input').forEach((inp) => {
+    inp.addEventListener('input', () => {
+      const sec = inp.dataset.sec, cat = inp.dataset.cat, key = inp.dataset.key;
+      const target = sec === 'entity' ? ENTITY_STYLE[cat] : RELATION_STYLE[cat];
+      if (key === 'dashed') target.dashed = inp.checked;
+      else if (key === 'color') { target.css = inp.value; target.color = hexToInt(inp.value); }
+      else if (key === 'size') target.size = clampThemeSize(inp.value);
+      else if (key === 'opacity') target.opacity = Number(inp.value);
+      else target[key] = Math.max(1, Number(inp.value) || 6);
+      clearTimeout(p._t);
+      p._t = setTimeout(() => { renderLegend(); rebuildGraph(); }, 250);
+    });
+  });
+}
+
+$('btn-style').addEventListener('click', () => {
+  const p = $('style-panel');
+  const opening = !p.classList.contains('show');
+  if (opening) { $('info-card').style.display = 'none'; renderStylePanel(); }
+  p.classList.toggle('show');
+});
+
+/* ================= 文件菜单（手机端：打开/保存/另存/网页版） ================= */
+$('m-file').addEventListener('click', (e) => {
+  e.stopPropagation();
+  $('file-menu').classList.toggle('show');
+});
+document.addEventListener('click', (e) => {
+  if (!$('file-menu').contains(e.target) && e.target !== $('m-file')) $('file-menu').classList.remove('show');
+});
+
+function downloadUrl(url) {
+  const a = document.createElement('a');
+  a.href = url;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => a.remove(), 800);
+}
+
+$('fm-save').addEventListener('click', () => { downloadUrl('/api/export/db'); $('file-menu').classList.remove('show'); });
+$('fm-saveas').addEventListener('click', () => {
+  const name = prompt('另存为图谱文件名', `kg-${new Date().toISOString().slice(0, 10)}.db`);
+  if (name === null) return;
+  const safe = encodeURIComponent(name.trim() || 'kg.db');
+  downloadUrl('/api/export/db?name=' + safe);
+  $('file-menu').classList.remove('show');
+});
+$('fm-savehtml').addEventListener('click', () => {
+  const name = prompt('另存为图谱网页文件名', `kg-viewer-${new Date().toISOString().slice(0, 10)}.html`);
+  if (name === null) return;
+  const safe = encodeURIComponent(name.trim() || 'kg-viewer.html');
+  downloadUrl('/api/export/html?name=' + safe);
+  $('file-menu').classList.remove('show');
+});
+$('fm-rdf').addEventListener('click', () => { window.open('/api/export/rdf', '_blank'); $('file-menu').classList.remove('show'); });
+$('fm-open').addEventListener('click', () => { $('file-menu').classList.remove('show'); $('db-file-input').click(); });
+$('db-file-input').addEventListener('change', async () => {
+  const f = $('db-file-input').files[0];
+  $('db-file-input').value = '';
+  if (!f) return;
+  if (!/\.(db|sqlite|sqlite3)$/i.test(f.name)) return toast('请选择 .db / .sqlite 图谱数据库文件', true);
+  if (!confirm(`打开《${f.name}》将替换当前图谱。\n替换前会自动打保存点备份当前数据，可通过版本回溯找回。是否继续？`)) return;
+  try {
+    const b64 = await readAsB64(f);
+    const r = await api('/api/graph/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64 }) });
+    toast(`已打开图谱《${f.name}》：实体 ${r.counts.entities} / 关系 ${r.counts.relations}（原数据备份于 ${r.backup_short || '最新保存点'}）`);
+    exitEgo();
+    state.selected = null;
+    await refreshAll();
+    loadHistory();
+  } catch (e) { toast('打开图谱失败: ' + e.message, true); }
+});
+
+/* ================= 手机端头部紧凑标签 ================= */
+const HEADER_LABELS = [
+  ['btn-savepoint', '打保存点', '存点'],
+  ['btn-relayout', '重新布局', '布局'],
+  ['btn-resetview', '重置视角', '视角'],
+];
+function compactHeader(mobile) {
+  for (const [id, , short] of HEADER_LABELS) {
+    const b = $(id);
+    if (!b) continue;
+    if (mobile) {
+      if (!b.dataset.full) b.dataset.full = b.textContent;
+      b.textContent = short;
+    } else if (b.dataset.full) {
+      b.textContent = b.dataset.full;
+    }
+  }
+}
+compactHeader(isMobile());
+window.addEventListener('resize', () => compactHeader(window.matchMedia('(max-width: 768px)').matches));
 
 /* ================= 数据刷新与同步 ================= */
 async function refreshAll(rebuild = true) {

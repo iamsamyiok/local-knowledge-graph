@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>/*__TITLE__*/</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body { font-family: "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; background: #0b0f1a; color: #d7dee9; font-size: 13px; }
+  header {
+    height: 44px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    background: #101728; border-bottom: 1px solid #1e2a44; flex-wrap: wrap;
+  }
+  header h1 { font-size: 14px; font-weight: 600; color: #7fd1ff; }
+  header .badge { font-size: 11px; color: #8fa3c0; border: 1px solid #2a3a5c; border-radius: 10px; padding: 2px 9px; }
+  header .ro { color: #ffb74d; border-color: #ffb74d66; }
+  header .spacer { flex: 1; }
+  header .date { font-size: 10.5px; color: #5c6f92; }
+  #wrap { position: relative; height: calc(100% - 44px); background: radial-gradient(ellipse at center, #0d1424 0%, #070a12 100%); }
+  #wrap canvas { display: block; touch-action: none; }
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; background: rgba(13,20,36,.85);
+    border: 1px solid #1e2a44; border-radius: 8px; padding: 9px 12px; font-size: 11px; color: #a9bbd8;
+    pointer-events: none; line-height: 1.9;
+  }
+  .legend b { color: #d7dee9; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .ln { display: inline-block; width: 22px; height: 0; border-top: 2.5px solid; margin-right: 6px; vertical-align: 3px; }
+  .ln.dash { border-top-style: dashed; }
+  #info-card {
+    position: absolute; top: 12px; right: 12px; width: 250px; max-height: 70%; overflow-y: auto; display: none;
+    background: rgba(13,20,36,.92); border: 1px solid #2a3a5c; border-radius: 8px; padding: 10px 12px;
+  }
+  #info-card h4 { color: #7fd1ff; font-size: 13px; margin-bottom: 6px; }
+  #info-card .kv { font-size: 11px; color: #a9bbd8; margin: 2px 0; word-break: break-all; }
+  #info-card .kv b { color: #d7dee9; }
+  .tag { display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 9px; border: 1px solid; margin-left: 4px; }
+  @media (max-width: 768px) {
+    #info-card { left: 8px; right: 8px; top: auto; bottom: 10px; width: auto; max-height: 40vh; }
+    header .date { display: none; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>/*__TITLE__*/</h1>
+  <span class="badge">/*__COUNTS__*/</span>
+  <span class="badge ro">只读查看</span>
+  <div class="spacer"></div>
+  <span class="date">导出于 /*__EXPORTED_AT__*/</span>
+</header>
+<div id="wrap">
+  <div class="legend" id="legend"></div>
+  <div id="info-card"></div>
+</div>
+<script>/*__THREE_JS__*/</script>
+<script>/*__ORBIT_CONTROLS__*/</script>
+<script>
+'use strict';
+const GRAPH = "__GRAPH_DATA__";
+
+const ENTITY_STYLE = {
+  '物理实体': { color: 0x4fc3f7, css: '#4fc3f7', shape: '实心球', size: 1 },
+  '抽象实体': { color: 0xba68c8, css: '#ba68c8', shape: '线框球', size: 1 },
+  '数值实体': { color: 0x81c784, css: '#81c784', shape: '立方体', size: 1 },
+  '时间实体': { color: 0xffb74d, css: '#ffb74d', shape: '圆环', size: 1 },
+};
+const RELATION_STYLE = {
+  '空间': { color: 0x4caf50, css: '#4caf50', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '互动': { color: 0xf44336, css: '#f44336', dashed: true, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '归属': { color: 0x2196f3, css: '#2196f3', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '时间': { color: 0xffc107, css: '#ffc107', dashed: true, dashSize: 6, gapSize: 4, opacity: 0.9 },
+  '属性': { color: 0x9c27b0, css: '#9c27b0', dashed: false, dashSize: 6, gapSize: 4, opacity: 0.9 },
+};
+
+const wrap = document.getElementById('wrap');
+const esc = (s) => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 5000);
+camera.position.set(0, 90, 260);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0);
+wrap.appendChild(renderer.domElement);
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(120, 200, 100);
+scene.add(dirLight);
+const grid = new THREE.GridHelper(480, 48, 0x1c2a47, 0x141e35);
+grid.position.y = -60;
+scene.add(grid);
+
+const nodeGroup = new THREE.Group(), linkGroup = new THREE.Group(), labelGroup = new THREE.Group();
+scene.add(nodeGroup, linkGroup, labelGroup);
+
+const simNodes = [], simLinks = [];
+const entityMap = new Map();
+
+function makeLabelSprite(text, cssColor, fontSize) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const font = fontSize + 'px "PingFang SC","Microsoft YaHei",sans-serif';
+  ctx.font = font;
+  const w = Math.ceil(ctx.measureText(text).width) + 20;
+  canvas.width = w; canvas.height = fontSize + 16;
+  ctx.font = font;
+  ctx.fillStyle = 'rgba(9,13,24,0.78)';
+  const r = 8;
+  ctx.beginPath();
+  ctx.moveTo(r,0); ctx.lineTo(w-r,0); ctx.quadraticCurveTo(w,0,w,r);
+  ctx.lineTo(w,canvas.height-r); ctx.quadraticCurveTo(w,canvas.height,w-r,canvas.height);
+  ctx.lineTo(r,canvas.height); ctx.quadraticCurveTo(0,canvas.height,0,canvas.height-r);
+  ctx.lineTo(0,r); ctx.quadraticCurveTo(0,0,r,0);
+  ctx.fill();
+  ctx.strokeStyle = cssColor; ctx.globalAlpha = 0.55; ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = cssColor; ctx.textBaseline = 'middle';
+  ctx.fillText(text, 10, canvas.height/2+1);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  const s = 0.16;
+  sprite.scale.set(canvas.width*s, canvas.height*s, 1);
+  return sprite;
+}
+
+function buildNodeMesh(category) {
+  const st = ENTITY_STYLE[category] || { color: 0xaaaaaa, size: 1 };
+  let mesh;
+  if (category === '物理实体') {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(9, 26, 18), new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.35, metalness: 0.15 }));
+  } else if (category === '抽象实体') {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(10, 18, 12), new THREE.MeshBasicMaterial({ color: st.color, wireframe: true }));
+  } else if (category === '数值实体') {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(13, 13, 13), new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.4, metalness: 0.1 }));
+  } else {
+    mesh = new THREE.Mesh(new THREE.TorusGeometry(9.5, 3.4, 16, 42), new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.35, metalness: 0.15 }));
+  }
+  mesh.scale.setScalar(st.size || 1);
+  return mesh;
+}
+
+(function build() {
+  const N = GRAPH.entities.length;
+  GRAPH.entities.forEach((e, i) => {
+    const mesh = buildNodeMesh(e.category);
+    const k = i + 0.5;
+    const phi = Math.acos(1 - 2*k/Math.max(N,1));
+    const theta = Math.PI * (1 + Math.sqrt(5)) * k;
+    const R = 40 + 12*Math.sqrt(N);
+    mesh.position.set(R*Math.sin(phi)*Math.cos(theta), (R*0.6)*Math.cos(phi), R*Math.sin(phi)*Math.sin(theta));
+    mesh.userData.entityId = e.id;
+    nodeGroup.add(mesh);
+    let attrs = {};
+    try { attrs = JSON.parse(e.attributes || '{}'); } catch (_) {}
+    const label = makeLabelSprite(e.name, ENTITY_STYLE[e.category] ? ENTITY_STYLE[e.category].css : '#ccc', 34);
+    labelGroup.add(label);
+    entityMap.set(e.id, { entity: e, mesh, label, attrs });
+    simNodes.push({ id: e.id, pos: mesh.position.clone(), vel: new THREE.Vector3(), mesh, label, sizeScale: (ENTITY_STYLE[e.category]||{}).size || 1 });
+  });
+  GRAPH.relations.forEach((r) => {
+    const a = simNodes.find(n => n.id === r.source_id), b = simNodes.find(n => n.id === r.target_id);
+    if (!a || !b) return;
+    const st = RELATION_STYLE[r.category] || { color: 0x999999, dashed: false };
+    const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
+    const mat = st.dashed
+      ? new THREE.LineDashedMaterial({ color: st.color, dashSize: st.dashSize||6, gapSize: st.gapSize||4, transparent: true, opacity: st.opacity===undefined?0.9:st.opacity })
+      : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: st.opacity===undefined?0.9:st.opacity });
+    const line = new THREE.Line(geo, mat);
+    line.userData.relationId = r.id;
+    linkGroup.add(line);
+    const lbl = makeLabelSprite(r.name, st.css, 24);
+    lbl.position.copy(a.pos).add(b.pos).multiplyScalar(0.5);
+    labelGroup.add(lbl);
+    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
+  });
+})();
+
+document.getElementById('legend').innerHTML =
+  '<b>实体样式</b><br>' + Object.keys(ENTITY_STYLE).map(c => '<span class="sw" style="background:'+ENTITY_STYLE[c].css+'"></span>'+c+' · '+ENTITY_STYLE[c].shape).join('<br>') +
+  '<br><b>关系线型</b><br>' + Object.keys(RELATION_STYLE).map(c => '<span class="ln '+(RELATION_STYLE[c].dashed?'dash':'')+'" style="border-color:'+RELATION_STYLE[c].css+'"></span>'+c+'关系').join('<br>');
+
+let budget = 480;
+function simStep() {
+  const REP = 2600, SPRING = 0.01, REST = 78, CENTER = 0.006, DAMP = 0.86;
+  for (let i = 0; i < simNodes.length; i++) for (let j = i+1; j < simNodes.length; j++) {
+    const A = simNodes[i], B = simNodes[j];
+    const dx = A.pos.x-B.pos.x, dy = A.pos.y-B.pos.y, dz = A.pos.z-B.pos.z;
+    let d2 = dx*dx+dy*dy+dz*dz; if (d2 < 4) d2 = 4;
+    const d = Math.sqrt(d2), f = REP/d2;
+    A.vel.x += dx/d*f; A.vel.y += dy/d*f; A.vel.z += dz/d*f;
+    B.vel.x -= dx/d*f; B.vel.y -= dy/d*f; B.vel.z -= dz/d*f;
+  }
+  for (const l of simLinks) {
+    const dx = l.b.pos.x-l.a.pos.x, dy = l.b.pos.y-l.a.pos.y, dz = l.b.pos.z-l.a.pos.z;
+    const d = Math.max(Math.sqrt(dx*dx+dy*dy+dz*dz), 0.01);
+    const f = SPRING*(d-REST);
+    l.a.vel.x += dx/d*f; l.a.vel.y += dy/d*f; l.a.vel.z += dz/d*f;
+    l.b.vel.x -= dx/d*f; l.b.vel.y -= dy/d*f; l.b.vel.z -= dz/d*f;
+  }
+  for (const nd of simNodes) { nd.vel.multiplyScalar(DAMP); nd.vel.addScaledVector(nd.pos, -CENTER); nd.pos.add(nd.vel); }
+  for (const l of simLinks) {
+    const pa = l.line.geometry.attributes.position;
+    pa.setXYZ(0, l.a.pos.x, l.a.pos.y, l.a.pos.z);
+    pa.setXYZ(1, l.b.pos.x, l.b.pos.y, l.b.pos.z);
+    pa.needsUpdate = true;
+    if (l.dashed) l.line.computeLineDistances();
+    l.label.position.copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
+  }
+  for (const nd of simNodes) { nd.mesh.position.copy(nd.pos); nd.label.position.set(nd.pos.x, nd.pos.y+18, nd.pos.z); }
+}
+
+const selected = { obj: null };
+function animate() {
+  requestAnimationFrame(animate);
+  if (budget > 0) { simStep(); budget--; }
+  for (const nd of simNodes) nd.mesh.scale.setScalar(nd.sizeScale || 1);
+  if (selected.obj && selected.obj.type === 'entity') {
+    const nd = simNodes.find(n => n.id === selected.obj.id);
+    if (nd) nd.mesh.scale.setScalar((nd.sizeScale||1) * (1.25 + 0.08*Math.sin(Date.now()/300)));
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+const raycaster = new THREE.Raycaster();
+raycaster.params.Line = { threshold: 3 };
+let downPos = null;
+renderer.domElement.addEventListener('pointerdown', e => { downPos = {x:e.clientX, y:e.clientY}; });
+renderer.domElement.addEventListener('pointerup', e => {
+  if (!downPos) return;
+  const moved = Math.hypot(e.clientX-downPos.x, e.clientY-downPos.y);
+  downPos = null;
+  if (moved > (e.pointerType === 'touch' ? 12 : 5)) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mouse = new THREE.Vector2(((e.clientX-rect.left)/rect.width)*2-1, -((e.clientY-rect.top)/rect.height)*2+1);
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(nodeGroup.children, false);
+  if (hits.length) { selected.obj = { type: 'entity', id: hits[0].object.userData.entityId }; renderCard(); return; }
+  const lh = raycaster.intersectObjects(linkGroup.children, false);
+  if (lh.length) { selected.obj = { type: 'relation', id: lh[0].object.userData.relationId }; renderCard(); return; }
+  selected.obj = null; renderCard();
+});
+
+function renderCard() {
+  const card = document.getElementById('info-card');
+  if (!selected.obj) { card.style.display = 'none'; return; }
+  if (selected.obj.type === 'entity') {
+    const m = entityMap.get(selected.obj.id);
+    if (!m) { card.style.display = 'none'; return; }
+    const e = m.entity;
+    let attrHtml = '';
+    for (const [k, v] of Object.entries(m.attrs)) attrHtml += '<div class="kv"><b>'+esc(k)+'</b>: '+esc(String(v))+'</div>';
+    const relCount = GRAPH.relations.filter(r => r.source_id === e.id || r.target_id === e.id).length;
+    card.innerHTML = '<h4>'+esc(e.name)+' <span class="tag" style="color:'+ENTITY_STYLE[e.category].css+';border-color:'+ENTITY_STYLE[e.category].css+'55">'+e.category+' · '+ENTITY_STYLE[e.category].shape+'</span></h4>' +
+      '<div class="kv">id: '+e.id+'　来源: '+esc(e.source)+'</div><div class="kv">关联关系: '+relCount+' 条</div>' + (attrHtml || '<div class="kv">（无属性）</div>');
+    card.style.display = 'block';
+  } else {
+    const r = GRAPH.relations.find(x => x.id === selected.obj.id);
+    if (!r) { card.style.display = 'none'; return; }
+    const s = entityMap.get(r.source_id), t = entityMap.get(r.target_id);
+    card.innerHTML = '<h4>'+esc(r.name)+' <span class="tag" style="color:'+RELATION_STYLE[r.category].css+';border-color:'+RELATION_STYLE[r.category].css+'55">'+r.category+'关系</span></h4>' +
+      '<div class="kv"><b>'+(s ? esc(s.entity.name) : '?')+'</b> --&gt; <b>'+(t ? esc(t.entity.name) : '?')+'</b></div><div class="kv">id: '+r.id+'　来源: '+esc(r.source)+'</div>';
+    card.style.display = 'block';
+  }
+}
+
+function resize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+resize();
+</script>
+</body>
+</html>

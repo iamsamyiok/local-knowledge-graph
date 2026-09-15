@@ -9,6 +9,7 @@ const rdf = require('./lib/rdf');
 const agent = require('./lib/agent');
 const V = require('./lib/validator');
 const inference = require('./lib/inference');
+const embeddings = require('./lib/embeddings');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -154,6 +155,46 @@ api.get('/inference', (req, res) => {
 });
 
 api.get('/ontology', (req, res) => res.json(inference.loadOntology()));
+
+// ---------- 向量混合检索 ----------
+api.get('/embeddings/status', (req, res) => res.json(embeddings.status()));
+
+api.get('/embeddings/settings', (req, res) => {
+  const s = embeddings.loadSettings();
+  res.json({ ...s, api_key: s.api_key ? '已配置' : '' }); // 不回传真实密钥
+});
+
+api.put('/embeddings/settings', (req, res) => {
+  try {
+    const patch = req.body || {};
+    // 前端传"已配置"占位时保留原密钥
+    if (patch.api_key === '已配置') delete patch.api_key;
+    const s = embeddings.saveSettings(patch);
+    res.json({ ...s, api_key: s.api_key ? '已配置' : '' });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+api.post('/embeddings/build', async (req, res) => {
+  try {
+    const result = await embeddings.build();
+    res.json(result);
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+api.post('/search', async (req, res) => {
+  const q = String((req.body || {}).query || '').trim();
+  if (!q) return res.status(400).json({ error: 'query不能为空' });
+  try {
+    res.json(await embeddings.search(q, (req.body || {}).top_k));
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+api.post('/cypher', (req, res) => {
+  const q = String((req.body || {}).query || '').trim();
+  if (!q) return res.status(400).json({ error: 'query不能为空' });
+  try { res.json({ rows: db.miniCypher(q) }); }
+  catch (e) { res.status(400).json({ error: e.message }); }
+});
 
 api.put('/ontology', (req, res) => {
   try { res.json(inference.saveOntology(req.body || {})); }

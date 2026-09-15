@@ -325,6 +325,7 @@
       <div class="tabs" id="tabs">
         <div data-tab="entity" class="active">实体</div>
         <div data-tab="relation">关系</div>
+        <div data-tab="search">检索</div>
         <div data-tab="log">日志</div>
         <div data-tab="version">版本</div>
       </div>
@@ -360,6 +361,30 @@
           <div class="row"><button class="primary" id="r-submit">添加</button></div>
         </div>
         <div class="card"><h3>关系列表</h3><div id="r-list"></div></div>
+      </div>
+
+      <div class="tabbody" id="tab-search">
+        <div class="card">
+          <h3>语义检索配置（硅基流动默认）</h3>
+          <div class="row">
+            <div style="flex:1"><label>API Key</label><input id="s-key" type="password" placeholder="仅存本地 data/settings.json"></div>
+            <div style="width:110px"><label>模型</label><input id="s-model"></div>
+          </div>
+          <div class="row"><button class="primary" id="s-save">保存配置</button><button id="s-build">构建全量向量</button><span id="s-status" style="font-size:11px;color:#8fa3c0;align-self:center"></span></div>
+        </div>
+        <div class="card">
+          <h3>混合检索（语义+关键词 RRF 融合）</h3>
+          <label>查询</label>
+          <input id="s-query" placeholder="例如：明朝的航海人物">
+          <div class="row"><button class="primary" id="s-run">检索</button><span id="s-mode" style="font-size:11px;color:#8fa3c0;align-self:center"></span></div>
+          <div id="s-results"></div>
+        </div>
+        <div class="card">
+          <h3>关系查询（迷你Cypher，只读）</h3>
+          <textarea id="c-query" placeholder="MATCH (a)-[r:互动]->(b) WHERE a.name contains 郑和 RETURN a.name, r.name, b.name LIMIT 10"></textarea>
+          <div class="row"><button class="primary" id="c-run">执行</button><span id="c-hint" style="font-size:11px;color:#8fa3c0;align-self:center">支持 contains / = 与 类型:互动|归属</span></div>
+          <div id="c-results"></div>
+        </div>
       </div>
 
       <div class="tabbody" id="tab-log">
@@ -1600,6 +1625,69 @@ function initPolling() {
   }, 3000);
 }
 
+/* ================= 检索页签 ================= */
+async function loadSearchStatus() {
+  try {
+    const [st, cfg] = await Promise.all([api('/api/embeddings/status'), api('/api/embeddings/settings')]);
+    $('s-status').textContent = `已索引 ${st.indexed}/${st.total_entities}`;
+    if (!$('s-model').value) $('s-model').value = cfg.model;
+    $('s-key').placeholder = cfg.api_key === '已配置' ? '已配置（输入新值可更换）' : '仅存本地 data/settings.json';
+  } catch (_) { /* 服务未就绪时静默 */ }
+}
+
+function renderSearchResults(r) {
+  $('s-mode').textContent = r.mode === 'hybrid' ? '语义+关键词融合' : '仅关键词（未配置key或未建向量）';
+  if (!r.results.length) { $('s-results').innerHTML = '<div class="kv" style="margin-top:8px">无匹配结果</div>'; return; }
+  $('s-results').innerHTML = r.results.map((x, i) => `
+    <div class="list-item" style="cursor:pointer" onclick="focusEgo(${x.entity.id})">
+      <b>${i + 1}. ${escapeHtml(x.entity.name)}</b>
+      <span class="tag" style="color:${ENTITY_STYLE[x.entity.category].css};border-color:${ENTITY_STYLE[x.entity.category].css}55">${x.entity.category}</span>
+      <div class="kv">语义 ${x.semantic_score ?? '—'}　关键词 ${x.keyword_score ?? '—'}　RRF ${x.rrf_score}　关联 ${x.hit_relations} 条</div>
+    </div>`).join('');
+}
+
+$('s-save').addEventListener('click', async () => {
+  const patch = { model: $('s-model').value.trim() || 'BAAI/bge-m3' };
+  const key = $('s-key').value.trim();
+  if (key) patch.api_key = key;
+  try {
+    await api('/api/embeddings/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    $('s-key').value = '';
+    loadSearchStatus();
+  } catch (e) { $('s-status').textContent = e.message; }
+});
+
+$('s-build').addEventListener('click', async () => {
+  const btn = $('s-build');
+  btn.disabled = true;
+  $('s-status').textContent = '构建中…';
+  try {
+    const r = await api('/api/embeddings/build', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    $('s-status').textContent = `已索引 ${r.indexed}/${r.total}`;
+  } catch (e) { $('s-status').textContent = e.message; }
+  btn.disabled = false;
+});
+
+async function runSearch() {
+  const q = $('s-query').value.trim();
+  if (!q) return;
+  $('s-mode').textContent = '检索中…';
+  try { renderSearchResults(await api('/api/search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q, top_k: 10 }) })); }
+  catch (e) { $('s-mode').textContent = e.message; }
+}
+$('s-run').addEventListener('click', runSearch);
+$('s-query').addEventListener('keydown', (e) => { if (e.key === 'Enter') runSearch(); });
+
+$('c-run').addEventListener('click', async () => {
+  const q = $('c-query').value.trim();
+  if (!q) return;
+  try {
+    const r = await api('/api/cypher', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query: q }) });
+    $('c-hint').textContent = `${r.rows.length} 行`;
+    $('c-results').innerHTML = '<pre style="font-size:11px;color:#cdd9e5;white-space:pre-wrap">' + escapeHtml(JSON.stringify(r.rows, null, 1)) + '</pre>';
+  } catch (e) { $('c-hint').textContent = e.message; }
+});
+
 /* ================= 事件绑定与启动 ================= */
 initTabs();
 $('e-submit').addEventListener('click', submitEntity);
@@ -1643,6 +1731,7 @@ $('btn-resetview').addEventListener('click', () => {
     toast('后端连接失败: ' + e.message, true);
   }
   initPolling();
+  loadSearchStatus();
 })();
 </script>
 </body>

@@ -158,8 +158,8 @@ test('importer: 合法空库通过校验', () => {
   const p = path.join(TMP, 'ok.db');
   const d = new DatabaseSync(p);
   d.exec(`CREATE TABLE entities (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT, category TEXT, attributes TEXT, source TEXT, created_at TEXT);
-    CREATE TABLE relations (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER, target_id INTEGER, name TEXT, category TEXT, created_at TEXT);
-    CREATE TABLE operation_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, action TEXT, entity_id INTEGER, relation_id INTEGER, detail TEXT, source TEXT, created_at TEXT);`);
+    CREATE TABLE relations (id INTEGER PRIMARY KEY AUTOINCREMENT, source_id INTEGER, target_id INTEGER, name TEXT, category TEXT, source TEXT, created_at TEXT);
+    CREATE TABLE operation_logs (id INTEGER PRIMARY KEY AUTOINCREMENT, op_type TEXT, snapshot TEXT, source TEXT, created_at TEXT);`);
   d.close();
   const r = importer.validateImportBuffer(fs.readFileSync(p));
   assert.equal(r.ok, true);

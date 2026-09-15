@@ -1,0 +1,1340 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>本地知识图谱整合器</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { height: 100%; overflow: hidden; }
+  body {
+    font-family: "PingFang SC", "Microsoft YaHei", system-ui, -apple-system, sans-serif;
+    background: #0b0f1a; color: #d7dee9; font-size: 13px;
+    overscroll-behavior: none;
+  }
+  button, input, select, textarea { touch-action: manipulation; }
+  #app { display: flex; flex-direction: column; height: 100vh; height: 100dvh; }
+
+  header {
+    height: 50px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
+    background: #101728; border-bottom: 1px solid #1e2a44; flex-shrink: 0;
+  }
+  header h1 { font-size: 15px; font-weight: 600; color: #7fd1ff; letter-spacing: 1px; }
+  header .spacer { flex: 1; }
+  header .badge { font-size: 11px; color: #8fa3c0; border: 1px solid #2a3a5c; border-radius: 10px; padding: 2px 9px; }
+  header .badge.ok { color: #7ee787; border-color: #2ea04366; }
+  header .badge.off { color: #f0883e; border-color: #f0883e66; }
+
+  button {
+    background: #1b2b4d; color: #cfe2ff; border: 1px solid #2f4a7a; border-radius: 5px;
+    padding: 5px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
+  }
+  button:hover { background: #24386a; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: #1f6feb; border-color: #388bfd; }
+  button.primary:hover { background: #2b7bff; }
+  button.danger { background: #3a1620; border-color: #7a2a3a; color: #ffb3c0; }
+  button.danger:hover { background: #4d1c29; }
+  button.ghost { background: transparent; }
+  .m-btn { display: none; }
+
+  #backdrop {
+    position: fixed; inset: 0; background: rgba(4,8,16,.5); z-index: 30; display: none;
+  }
+  #backdrop.show { display: block; }
+
+  main { display: flex; flex: 1; min-height: 0; }
+
+  .panel {
+    width: 300px; background: #0e1524; border-right: 1px solid #1e2a44;
+    display: flex; flex-direction: column; flex-shrink: 0;
+  }
+  .panel.right { border-right: none; border-left: 1px solid #1e2a44; width: 330px; }
+
+  .tabs { display: flex; border-bottom: 1px solid #1e2a44; flex-shrink: 0; }
+  .tabs div {
+    flex: 1; text-align: center; padding: 9px 0; cursor: pointer; color: #8fa3c0; font-size: 12px;
+    border-bottom: 2px solid transparent;
+  }
+  .tabs div.active { color: #7fd1ff; border-bottom-color: #1f6feb; background: #101a30; }
+
+  .tabbody { flex: 1; overflow-y: auto; padding: 12px; display: none; }
+  .tabbody.active { display: block; }
+  .tabbody::-webkit-scrollbar, .messages::-webkit-scrollbar { width: 8px; }
+  .tabbody::-webkit-scrollbar-thumb, .messages::-webkit-scrollbar-thumb { background: #24304d; border-radius: 4px; }
+
+  .card { background: #101a30; border: 1px solid #1e2a44; border-radius: 8px; padding: 10px; margin-bottom: 12px; }
+  .card h3 { font-size: 12px; color: #9fb6d9; margin-bottom: 8px; font-weight: 600; }
+  label { display: block; font-size: 11px; color: #8fa3c0; margin: 8px 0 3px; }
+  input, select, textarea {
+    width: 100%; background: #0b1220; border: 1px solid #24304d; border-radius: 5px;
+    color: #d7dee9; padding: 6px 8px; font-size: 12px; font-family: inherit;
+  }
+  textarea { resize: vertical; min-height: 56px; font-family: ui-monospace, Consolas, monospace; }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: #1f6feb; }
+  .row { display: flex; gap: 8px; margin-top: 10px; }
+  .row > * { flex: 1; }
+
+  .list-item {
+    background: #0b1220; border: 1px solid #1e2a44; border-radius: 6px;
+    padding: 7px 9px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px;
+  }
+  .list-item .main { flex: 1; min-width: 0; }
+  .list-item .name { font-size: 12.5px; color: #e2eaf7; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-item .sub { font-size: 10.5px; color: #7a8db0; margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .list-item button { padding: 3px 8px; font-size: 11px; flex-shrink: 0; }
+  .tag {
+    display: inline-block; font-size: 10px; padding: 1px 7px; border-radius: 9px;
+    border: 1px solid; margin-left: 4px; vertical-align: 1px;
+  }
+
+  #canvas-wrap { flex: 1; position: relative; min-width: 0; background: radial-gradient(ellipse at center, #0d1424 0%, #070a12 100%); }
+  #canvas-wrap canvas { display: block; touch-action: none; }
+  .legend {
+    position: absolute; left: 12px; bottom: 12px; background: rgba(13,20,36,.85);
+    border: 1px solid #1e2a44; border-radius: 8px; padding: 9px 12px; font-size: 11px; color: #a9bbd8;
+    pointer-events: none; line-height: 1.9;
+  }
+  .legend b { color: #d7dee9; font-weight: 600; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; vertical-align: -1px; }
+  .ln { display: inline-block; width: 22px; height: 0; border-top: 2.5px solid; margin-right: 6px; vertical-align: 3px; }
+  .ln.dash { border-top-style: dashed; }
+
+  #info-card {
+    position: absolute; top: 12px; right: 12px; width: 240px; display: none;
+    background: rgba(13,20,36,.92); border: 1px solid #2a3a5c; border-radius: 8px; padding: 10px 12px;
+  }
+  #info-card h4 { color: #7fd1ff; font-size: 13px; margin-bottom: 6px; }
+  #info-card .kv { font-size: 11px; color: #a9bbd8; margin: 2px 0; word-break: break-all; }
+  #info-card .kv b { color: #d7dee9; }
+  #info-card .btns { margin-top: 8px; display: flex; gap: 6px; }
+  #empty-hint {
+    position: absolute; top: 45%; left: 50%; transform: translate(-50%,-50%);
+    color: #4a5b7d; font-size: 14px; pointer-events: none; text-align: center; line-height: 2;
+  }
+
+  /* ================= 中心层级视图 ================= */
+  #ego-bar {
+    position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+    display: none; align-items: center; gap: 8px; flex-wrap: wrap; justify-content: center;
+    background: rgba(13,20,36,.92); border: 1px solid #2a3a5c; border-radius: 8px;
+    padding: 7px 12px; z-index: 12; max-width: calc(100% - 24px); font-size: 12px;
+  }
+  #ego-bar.show { display: flex; }
+  #ego-bar .ego-name { color: #ffd75f; font-weight: 600; max-width: 160px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #ego-bar label { margin: 0; color: #8fa3c0; }
+  #ego-bar input { width: 76px; }
+  #ego-bar .ego-hint { color: #5c6f92; font-size: 10.5px; width: 100%; text-align: center; }
+  @media (max-width: 768px) {
+    #ego-bar { top: 8px; padding: 6px 8px; gap: 6px; }
+    #ego-bar .ego-name { max-width: 110px; }
+    #ego-bar button { min-height: 30px; padding: 5px 9px; font-size: 11px; }
+  }
+
+  /* ================= 实体图片 ================= */
+  #img-section { margin-top: 8px; }
+  #img-grid { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+  #img-grid img {
+    width: 52px; height: 52px; object-fit: cover; border-radius: 6px; cursor: zoom-in;
+    border: 1px solid #2a3a5c; background: #0b1220;
+  }
+  #img-grid img:hover { border-color: #1f6feb; }
+  .img-tag { color: #7fd1ff; }
+  #lightbox {
+    position: fixed; inset: 0; z-index: 60; display: none;
+    background: rgba(4,8,16,.92); align-items: center; justify-content: center;
+  }
+  #lightbox.show { display: flex; }
+  #lightbox figure { max-width: 92vw; max-height: 88vh; display: flex; flex-direction: column; gap: 10px; align-items: center; margin: 0; }
+  #lightbox img { max-width: 92vw; max-height: 76vh; object-fit: contain; border-radius: 8px; background: #0b1220; }
+  #lightbox figcaption { color: #cfe2ff; font-size: 12.5px; text-align: center; word-break: break-all; }
+  #lightbox .lb-btns { display: flex; gap: 10px; align-items: center; }
+  #lightbox .lb-close {
+    position: absolute; top: 12px; right: 14px; width: 40px; height: 40px; border-radius: 50%;
+    background: rgba(13,20,36,.9); font-size: 18px; line-height: 1;
+  }
+
+  .messages { flex: 1; overflow-y: auto; padding: 12px; }
+  .msg { margin-bottom: 10px; }
+  .msg .who { font-size: 10.5px; color: #7a8db0; margin-bottom: 3px; }
+  .msg .bubble {
+    background: #101a30; border: 1px solid #1e2a44; border-radius: 8px; padding: 8px 10px;
+    font-size: 12px; line-height: 1.7; white-space: pre-wrap; word-break: break-word;
+  }
+  .msg.user .bubble { background: #16233f; border-color: #2a3f6b; }
+  .msg .ops { margin-top: 6px; }
+  .chip {
+    display: inline-block; font-size: 10.5px; background: #0f2e1c; color: #7ee787;
+    border: 1px solid #2ea04355; border-radius: 9px; padding: 1px 8px; margin: 2px 3px 0 0;
+  }
+  .chip.warn { background: #331b0d; color: #f0b37e; border-color: #f0883e55; }
+  .chat-input { padding: 10px; border-top: 1px solid #1e2a44; flex-shrink: 0; }
+  .chat-input textarea { min-height: 62px; }
+  .hint-text { font-size: 10.5px; color: #5c6f92; margin-top: 5px; line-height: 1.6; }
+  #file-chip {
+    display: flex; align-items: center; gap: 8px; background: #16233f;
+    border: 1px dashed #2f4a7a; border-radius: 6px; padding: 5px 9px; margin-bottom: 7px;
+  }
+  #file-chip-name { flex: 1; font-size: 11.5px; color: #7fd1ff; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #file-chip button { padding: 2px 8px; font-size: 10.5px; }
+  .report { font-size: 11px; color: #a9bbd8; margin-top: 6px; line-height: 1.8; background: #0d1628; border: 1px solid #1e2a44; border-radius: 6px; padding: 7px 9px; }
+  .report b { color: #7ee787; }
+  .report .rerr { color: #f0b37e; }
+
+  #toast {
+    position: fixed; bottom: 26px; left: 50%; transform: translateX(-50%);
+    background: #16233f; border: 1px solid #2f4a7a; color: #cfe2ff; border-radius: 7px;
+    padding: 9px 18px; font-size: 12.5px; display: none; z-index: 99; max-width: 70vw;
+  }
+  #toast.err { border-color: #7a2a3a; color: #ffb3c0; background: #241318; }
+  .log-item { font-size: 11px; border-bottom: 1px solid #16213a; padding: 7px 2px; }
+  .log-item .l1 { display: flex; justify-content: space-between; color: #9fb6d9; }
+  .log-item .l2 { color: #67799c; margin-top: 3px; word-break: break-all; }
+  .ver-item { background: #0b1220; border: 1px solid #1e2a44; border-radius: 6px; padding: 8px 10px; margin-bottom: 7px; }
+  .ver-item .v1 { display: flex; align-items: center; gap: 7px; }
+  .ver-item code { color: #7fd1ff; font-size: 11px; }
+  .ver-item .v2 { font-size: 11px; color: #b6c6e2; margin: 4px 0; }
+  .ver-item .v3 { font-size: 10px; color: #67799c; }
+
+  /* ================= 平板/小屏桌面适配（769px-1100px） ================= */
+  @media (min-width: 769px) and (max-width: 1100px) {
+    header { padding: 0 10px; gap: 8px; }
+    header h1 { font-size: 13.5px; }
+    header button { padding: 4px 9px; font-size: 11.5px; }
+    .panel { width: 264px; }
+    .panel.right { width: 296px; }
+    #info-card { width: 216px; }
+    .legend { font-size: 10px; padding: 7px 9px; line-height: 1.7; }
+  }
+
+  /* ================= 手机端适配 ================= */
+  @media (max-width: 768px) {
+    .m-btn { display: inline-block; background: #16233f; }
+    header {
+      flex-wrap: wrap; height: auto; min-height: 46px;
+      padding: 6px 8px; gap: 6px; row-gap: 6px;
+    }
+    header h1 {
+      font-size: 12.5px; letter-spacing: 0; max-width: 90px;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    header button { padding: 5px 9px; font-size: 11px; }
+    #agent-badge { display: none; }
+    #stat-badge { font-size: 10px; padding: 2px 7px; }
+
+    /* 左右面板变为抽屉 */
+    .panel {
+      position: fixed; top: 0; bottom: 0; left: 0; width: min(86vw, 320px);
+      z-index: 40; transform: translateX(-105%);
+      transition: transform .25s ease; box-shadow: 0 0 30px rgba(0,0,0,.55);
+    }
+    .panel.open { transform: translateX(0); }
+    .panel.right {
+      left: auto; right: 0; width: min(92vw, 360px);
+      transform: translateX(105%);
+    }
+    .panel.right.open { transform: translateX(0); }
+    .tabbody, .messages { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+    .chat-input { padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+
+    /* 触屏表单16px，避免iOS聚焦自动放大 */
+    input, select, textarea { font-size: 16px; padding: 8px 10px; }
+    button { min-height: 30px; }
+    .list-item button { min-height: 26px; padding: 4px 10px; }
+
+    /* 信息卡变为底部卡片 */
+    #info-card {
+      left: 8px; right: 8px; top: auto; bottom: 58px; width: auto;
+      max-height: 42vh; overflow-y: auto; z-index: 25;
+    }
+    .info-btns button { min-height: 34px; }
+
+    /* 图例默认收起，由浮动按钮开关 */
+    .legend { bottom: 56px; font-size: 10px; padding: 7px 9px; line-height: 1.7; }
+    .legend.hidden { display: none; }
+    #m-legend {
+      display: block; position: absolute; left: 10px; bottom: 12px; z-index: 15;
+      border-radius: 16px; background: rgba(13,20,36,.92);
+    }
+    #empty-hint { width: 80vw; }
+  }
+  @media (max-width: 430px) {
+    #stat-badge { display: none; }
+  }
+</style>
+</head>
+<body>
+<div id="app">
+  <header>
+    <h1>本地知识图谱整合器</h1>
+    <span class="badge" id="stat-badge">实体 0 / 关系 0</span>
+    <span class="badge" id="agent-badge">OpenCode 检测中</span>
+    <div class="spacer"></div>
+    <button id="m-left" class="m-btn" title="打开图谱面板">图谱</button>
+    <button id="m-right" class="m-btn" title="打开AI对话">AI</button>
+    <button id="btn-savepoint" title="将当前合规数据提交为Git保存点（仅存差异）">打保存点</button>
+    <button id="btn-export" title="导出标准RDF(Turtle)格式文件">导出RDF</button>
+    <button id="btn-relayout">重新布局</button>
+    <button id="btn-resetview">重置视角</button>
+  </header>
+
+  <main>
+    <div class="panel" id="panel-left">
+      <div class="tabs" id="tabs">
+        <div data-tab="entity" class="active">实体</div>
+        <div data-tab="relation">关系</div>
+        <div data-tab="log">日志</div>
+        <div data-tab="version">版本</div>
+      </div>
+
+      <div class="tabbody active" id="tab-entity">
+        <div class="card">
+          <h3 id="entity-form-title">新增实体</h3>
+          <label>名称</label>
+          <input id="e-name" placeholder="例如：长江">
+          <label>大类（对应3D样式）</label>
+          <select id="e-category"></select>
+          <label>属性 JSON（扁平键值对，三元组结构）</label>
+          <textarea id="e-attrs" placeholder='{"键": "值"}'></textarea>
+          <div class="row">
+            <button class="primary" id="e-submit">添加</button>
+            <button class="ghost" id="e-cancel" style="display:none">取消编辑</button>
+          </div>
+        </div>
+        <div class="card"><h3>实体列表</h3><div id="e-list"></div></div>
+      </div>
+
+      <div class="tabbody" id="tab-relation">
+        <div class="card">
+          <h3>新增关系</h3>
+          <label>起点实体</label>
+          <select id="r-source"></select>
+          <label>关系名称</label>
+          <input id="r-name" placeholder="例如：位于">
+          <label>大类（对应线型/颜色）</label>
+          <select id="r-category"></select>
+          <label>终点实体</label>
+          <select id="r-target"></select>
+          <div class="row"><button class="primary" id="r-submit">添加</button></div>
+        </div>
+        <div class="card"><h3>关系列表</h3><div id="r-list"></div></div>
+      </div>
+
+      <div class="tabbody" id="tab-log">
+        <div class="card">
+          <h3>操作日志（手工与OpenCode共用）</h3>
+          <div id="log-list"></div>
+        </div>
+      </div>
+
+      <div class="tabbody" id="tab-version">
+        <div class="card">
+          <h3>Git保存点</h3>
+          <label>保存点备注（可选）</label>
+          <input id="v-message" placeholder="例如：补全中国地理实体">
+          <div class="row"><button class="primary" id="v-save">打保存点</button></div>
+          <div class="hint-text">数据文件 data/kg.db 由本地Git仓库托管，仅存差异版本；恢复前会自动备份当前状态。</div>
+        </div>
+        <div class="card"><h3>提交历史（与操作日志双向绑定）</h3><div id="v-list"></div></div>
+      </div>
+    </div>
+
+    <div id="canvas-wrap">
+      <div class="legend" id="legend"></div>
+      <button id="m-legend" class="m-btn">图例</button>
+      <div id="ego-bar">
+        <span>中心:</span><span class="ego-name" id="ego-name"></span>
+        <label>层数</label><input type="number" id="ego-depth" min="1" step="1" placeholder="全部">
+        <button id="ego-rebuild">重新布局</button>
+        <button id="ego-exit">退出中心</button>
+        <div class="ego-hint">清空层数输入框 = 显示全部层级；层级光圈颜色随跳数递进</div>
+      </div>
+      <div id="info-card"></div>
+      <div id="empty-hint" style="display:none">暂无数据<br>在左侧添加实体，或在右侧让 OpenCode 联网补全</div>
+    </div>
+
+    <div class="panel right" id="panel-right">
+      <div class="tabs"><div class="active" style="cursor:default">OpenCode 自然语言指令</div></div>
+      <div class="messages" id="messages">
+        <div class="msg bot"><div class="who">系统</div><div class="bubble">输入自然语言指令（如"帮我联网查一下珠穆朗玛峰的海拔并建入图谱"）。OpenCode 将校验信息后提交操作，所有写入均需通过RDF规范校验。</div></div>
+      </div>
+      <div class="chat-input">
+        <div id="file-chip" style="display:none">
+          <span id="file-chip-name"></span>
+          <button id="file-chip-del" title="移除附件">移除</button>
+        </div>
+        <textarea id="agent-input" placeholder="输入指令，Enter发送，Shift+Enter换行；可附文档让OpenCode抽取三元组"></textarea>
+        <div class="row">
+          <button class="ghost" id="agent-file-btn" title="附上文档，由kg-triples技能抽取三元组">附文档</button>
+          <button class="primary" id="agent-send">发送</button>
+        </div>
+        <input type="file" id="agent-file" accept=".txt,.md,.markdown,.csv,.json,.html,.htm,.xml,.pdf,.docx,.doc" style="display:none">
+        <div class="hint-text">OpenCode 进程由后端默认拉起；仅它可联网补全公开信息，本地图谱数据不对外传输。文档经 kg-triples 技能抽取并校验后融合入库。</div>
+      </div>
+    </div>
+  </main>
+</div>
+<div id="backdrop"></div>
+<div id="toast"></div>
+<div id="lightbox">
+  <button class="lb-close" id="lb-close" title="关闭">x</button>
+  <figure>
+    <img id="lb-img" alt="">
+    <figcaption id="lb-cap"></figcaption>
+    <div class="lb-btns">
+      <button id="lb-prev">上一张</button>
+      <span id="lb-pos" style="color:#8fa3c0;font-size:11.5px"></span>
+      <button id="lb-next">下一张</button>
+      <button class="danger" onclick="delImage()">删除绑定</button>
+    </div>
+  </figure>
+</div>
+
+<script src="/vendor/three.min.js"></script>
+<script src="/vendor/OrbitControls.js"></script>
+<script>
+'use strict';
+
+/* ================= 全局状态 ================= */
+const state = {
+  entities: [], relations: [],
+  entityMap: new Map(),
+  version: -1,
+  editingEntityId: null,
+  selected: null,          // {type:'entity'|'relation', id}
+  ego: null,               // {centerId, depth: null=全部|正整数} 中心层级模式
+  imageCounts: new Map(),  // entityId -> 图片数量
+  entityImages: new Map(), // entityId -> [图片行]
+};
+
+const $ = (id) => document.getElementById(id);
+function toast(msg, isErr) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = isErr ? 'err' : '';
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => { t.style.display = 'none'; }, 3200);
+}
+
+/* ================= 常量样式映射 ================= */
+const ENTITY_STYLE = {
+  '物理实体': { color: 0x4fc3f7, css: '#4fc3f7', shape: '实心球' },
+  '抽象实体': { color: 0xba68c8, css: '#ba68c8', shape: '线框球' },
+  '数值实体': { color: 0x81c784, css: '#81c784', shape: '立方体' },
+  '时间实体': { color: 0xffb74d, css: '#ffb74d', shape: '圆环' },
+};
+const RELATION_STYLE = {
+  '空间': { color: 0x4caf50, css: '#4caf50', dashed: false },
+  '互动': { color: 0xf44336, css: '#f44336', dashed: true },
+  '归属': { color: 0x2196f3, css: '#2196f3', dashed: false },
+  '时间': { color: 0xffc107, css: '#ffc107', dashed: true },
+  '属性': { color: 0x9c27b0, css: '#9c27b0', dashed: false },
+};
+// 中心层级模式：层级光圈配色（L0中心金色双环，L1起按层递进，超出循环）
+const LEVEL_COLORS = ['#ffd75f', '#7ee787', '#58a6ff', '#d2a8ff', '#ffa657', '#ff7b72', '#e3b341'];
+const levelColor = (lv) => LEVEL_COLORS[Math.min(lv, LEVEL_COLORS.length - 1)];
+
+function makeRingSprite(cssColor, isCenter) {
+  const size = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.strokeStyle = cssColor;
+  if (isCenter) {
+    ctx.lineWidth = 9; ctx.globalAlpha = 0.95;
+    ctx.beginPath(); ctx.arc(size / 2, size / 2, 52, 0, Math.PI * 2); ctx.stroke();
+    ctx.lineWidth = 4; ctx.globalAlpha = 0.6;
+    ctx.beginPath(); ctx.arc(size / 2, size / 2, 36, 0, Math.PI * 2); ctx.stroke();
+  } else {
+    ctx.lineWidth = 7; ctx.globalAlpha = 0.85;
+    ctx.beginPath(); ctx.arc(size / 2, size / 2, 50, 0, Math.PI * 2); ctx.stroke();
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  sprite.scale.set(36, 36, 1);
+  return sprite;
+}
+
+/* ================= Three.js 场景 ================= */
+const wrap = $('canvas-wrap');
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(60, 1, 0.1, 5000);
+camera.position.set(0, 90, 260);
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setClearColor(0x000000, 0);
+wrap.appendChild(renderer.domElement);
+
+const controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.enableDamping = true;
+controls.dampingFactor = 0.08;
+
+scene.add(new THREE.AmbientLight(0xffffff, 0.55));
+const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+dirLight.position.set(120, 200, 100);
+scene.add(dirLight);
+const grid = new THREE.GridHelper(480, 48, 0x1c2a47, 0x141e35);
+grid.position.y = -60;
+scene.add(grid);
+
+let nodeGroup = new THREE.Group();
+let linkGroup = new THREE.Group();
+let labelGroup = new THREE.Group();
+scene.add(nodeGroup, linkGroup, labelGroup);
+
+const simNodes = [];   // { id, pos:Vector3, vel:Vector3, mesh, radius }
+const simLinks = [];   // { id, a, b, line, label, dashed }
+let simBudget = 0;
+
+function resize() {
+  const w = wrap.clientWidth, h = wrap.clientHeight;
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  renderer.setSize(w, h);
+}
+window.addEventListener('resize', resize);
+
+/* 跨断点自适应：桌面(>1100) / 紧凑桌面(769-1100) / 手机(<=768)，切换时自动纠正布局状态 */
+let wasMobileView = window.matchMedia('(max-width: 768px)').matches;
+window.addEventListener('resize', () => {
+  const m = window.matchMedia('(max-width: 768px)').matches;
+  if (m !== wasMobileView) {
+    wasMobileView = m;
+    closeDrawers();
+    $('legend').classList.toggle('hidden', m);
+  }
+});
+
+function makeLabelSprite(text, cssColor, fontSize) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  const font = `${fontSize}px "PingFang SC", "Microsoft YaHei", sans-serif`;
+  ctx.font = font;
+  const w = Math.ceil(ctx.measureText(text).width) + 20;
+  canvas.width = w;
+  canvas.height = fontSize + 16;
+  ctx.font = font;
+  ctx.fillStyle = 'rgba(9,13,24,0.78)';
+  const r = 8;
+  ctx.beginPath();
+  ctx.moveTo(r, 0); ctx.lineTo(w - r, 0); ctx.quadraticCurveTo(w, 0, w, r);
+  ctx.lineTo(w, canvas.height - r); ctx.quadraticCurveTo(w, canvas.height, w - r, canvas.height);
+  ctx.lineTo(r, canvas.height); ctx.quadraticCurveTo(0, canvas.height, 0, canvas.height - r);
+  ctx.lineTo(0, r); ctx.quadraticCurveTo(0, 0, r, 0);
+  ctx.fill();
+  ctx.strokeStyle = cssColor; ctx.globalAlpha = 0.55; ctx.stroke(); ctx.globalAlpha = 1;
+  ctx.fillStyle = cssColor;
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 10, canvas.height / 2 + 1);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.minFilter = THREE.LinearFilter;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }));
+  const s = 0.16;
+  sprite.scale.set(canvas.width * s, canvas.height * s, 1);
+  return sprite;
+}
+
+function buildNodeMesh(category) {
+  const st = ENTITY_STYLE[category] || { color: 0xaaaaaa };
+  let mesh;
+  if (category === '物理实体') {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(9, 26, 18),
+      new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.35, metalness: 0.15 }));
+  } else if (category === '抽象实体') {
+    mesh = new THREE.Mesh(new THREE.SphereGeometry(10, 18, 12),
+      new THREE.MeshBasicMaterial({ color: st.color, wireframe: true }));
+  } else if (category === '数值实体') {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(13, 13, 13),
+      new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.4, metalness: 0.1 }));
+  } else {
+    mesh = new THREE.Mesh(new THREE.TorusGeometry(9.5, 3.4, 16, 42),
+      new THREE.MeshStandardMaterial({ color: st.color, roughness: 0.35, metalness: 0.15 }));
+  }
+  mesh.userData.category = category;
+  return mesh;
+}
+
+function rebuildGraph() {
+  scene.remove(nodeGroup, linkGroup, labelGroup);
+  nodeGroup = new THREE.Group(); linkGroup = new THREE.Group(); labelGroup = new THREE.Group();
+  scene.add(nodeGroup, linkGroup, labelGroup);
+  simNodes.length = 0; simLinks.length = 0;
+
+  // 中心层级模式：仅构建子图；全图模式：构建全部
+  const sub = state.ego ? calcEgo(state.ego.centerId, state.ego.depth) : null;
+  const ents = sub ? sub.entities : state.entities;
+  const rels = sub ? sub.relations : state.relations;
+
+  state.entityMap.clear();
+  const N = ents.length;
+  ents.forEach((e, i) => {
+    const mesh = buildNodeMesh(e.category);
+    if (sub) {
+      // 层级球壳分布：中心固定原点，每层外扩
+      if (e.level === 0) {
+        mesh.position.set(0, 0, 0);
+      } else {
+        const shell = 26 + e.level * 54;
+        const ringNodes = ents.filter((x) => x.level === e.level);
+        const k = ringNodes.indexOf(e) + 0.5;
+        const phi = Math.acos(1 - 2 * k / Math.max(ringNodes.length, 1));
+        const theta = Math.PI * (1 + Math.sqrt(5)) * k;
+        mesh.position.set(
+          shell * Math.sin(phi) * Math.cos(theta),
+          (shell * 0.6) * Math.cos(phi),
+          shell * Math.sin(phi) * Math.sin(theta)
+        );
+      }
+      // 层级光圈：中心金色双环，其余按层级配色
+      mesh.add(makeRingSprite(levelColor(e.level), e.level === 0));
+    } else {
+      // 初始位置：斐波那契球面分布
+      const k = i + 0.5;
+      const phi = Math.acos(1 - 2 * k / Math.max(N, 1));
+      const theta = Math.PI * (1 + Math.sqrt(5)) * k;
+      const R = 40 + 12 * Math.sqrt(N);
+      mesh.position.set(
+        R * Math.sin(phi) * Math.cos(theta),
+        (R * 0.6) * Math.cos(phi),
+        R * Math.sin(phi) * Math.sin(theta)
+      );
+    }
+    mesh.userData.entityId = e.id;
+    nodeGroup.add(mesh);
+
+    let attrs = {};
+    try { attrs = JSON.parse(e.attributes || '{}'); } catch (_) {}
+    const lvlTag = sub ? ` L${e.level}` : '';
+    const label = makeLabelSprite(e.name + lvlTag, ENTITY_STYLE[e.category] ? ENTITY_STYLE[e.category].css : '#ccc', 34);
+    labelGroup.add(label);
+
+    state.entityMap.set(e.id, { entity: e, mesh, label, attrs, level: sub ? e.level : null });
+    simNodes.push({ id: e.id, pos: mesh.position.clone(), vel: new THREE.Vector3(), mesh, label, radius: 10 });
+  });
+
+  rels.forEach((r) => {
+    const a = simNodes.find((n) => n.id === r.source_id);
+    const b = simNodes.find((n) => n.id === r.target_id);
+    if (!a || !b) return;
+    const st = RELATION_STYLE[r.category] || { color: 0x999999, dashed: false };
+    const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
+    const mat = st.dashed
+      ? new THREE.LineDashedMaterial({ color: st.color, dashSize: 6, gapSize: 4, transparent: true, opacity: 0.9 })
+      : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: 0.9 });
+    const line = new THREE.Line(geo, mat);
+    line.userData.relationId = r.id;
+    linkGroup.add(line);
+    const mid = a.pos.clone().add(b.pos).multiplyScalar(0.5);
+    const lbl = makeLabelSprite(r.category, st.css, 24);
+    lbl.position.copy(mid);
+    labelGroup.add(lbl);
+    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
+  });
+
+  simBudget = 420;
+  $('empty-hint').style.display = N ? 'none' : 'block';
+  if (sub) $('empty-hint').innerHTML = '该范围内暂无实体';
+  renderInfoCard();
+}
+
+function simStep() {
+  const n = simNodes.length;
+  const REP = 2600, SPRING = 0.01, REST = 78, CENTER = 0.006, DAMP = 0.86;
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const A = simNodes[i], B = simNodes[j];
+      const dx = A.pos.x - B.pos.x, dy = A.pos.y - B.pos.y, dz = A.pos.z - B.pos.z;
+      let d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 < 4) d2 = 4;
+      const d = Math.sqrt(d2);
+      const f = REP / d2;
+      const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f;
+      A.vel.x += fx; A.vel.y += fy; A.vel.z += fz;
+      B.vel.x -= fx; B.vel.y -= fy; B.vel.z -= fz;
+    }
+  }
+  for (const l of simLinks) {
+    const dx = l.b.pos.x - l.a.pos.x, dy = l.b.pos.y - l.a.pos.y, dz = l.b.pos.z - l.a.pos.z;
+    const d = Math.max(Math.sqrt(dx * dx + dy * dy + dz * dz), 0.01);
+    const f = SPRING * (d - REST);
+    const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f;
+    l.a.vel.x += fx; l.a.vel.y += fy; l.a.vel.z += fz;
+    l.b.vel.x -= fx; l.b.vel.y -= fy; l.b.vel.z -= fz;
+  }
+  for (const nd of simNodes) {
+    nd.vel.multiplyScalar(DAMP);
+    nd.vel.addScaledVector(nd.pos, -CENTER);
+    nd.pos.add(nd.vel);
+  }
+  for (const l of simLinks) {
+    const posAttr = l.line.geometry.attributes.position;
+    posAttr.setXYZ(0, l.a.pos.x, l.a.pos.y, l.a.pos.z);
+    posAttr.setXYZ(1, l.b.pos.x, l.b.pos.y, l.b.pos.z);
+    posAttr.needsUpdate = true;
+    if (l.dashed) l.line.computeLineDistances();
+    l.label.position.copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
+  }
+  for (const nd of simNodes) {
+    nd.mesh.position.copy(nd.pos);
+    nd.label.position.set(nd.pos.x, nd.pos.y + 18, nd.pos.z);
+  }
+}
+
+function animate() {
+  requestAnimationFrame(animate);
+  if (simBudget > 0) { simStep(); simBudget--; }
+  // 选中实体呼吸高亮
+  for (const nd of simNodes) nd.mesh.scale.setScalar(1);
+  if (state.selected && state.selected.type === 'entity') {
+    const m = state.entityMap.get(state.selected.id);
+    if (m) m.mesh.scale.setScalar(1.25 + 0.08 * Math.sin(Date.now() / 300));
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+
+/* ================= 拾取 ================= */
+const raycaster = new THREE.Raycaster();
+raycaster.params.Line = { threshold: 3 };
+let downPos = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downPos = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downPos) return;
+  const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
+  downPos = null;
+  const tapThresh = e.pointerType === 'touch' ? 12 : 5;
+  if (moved > tapThresh) return;
+  const rect = renderer.domElement.getBoundingClientRect();
+  const mouse = new THREE.Vector2(
+    ((e.clientX - rect.left) / rect.width) * 2 - 1,
+    -((e.clientY - rect.top) / rect.height) * 2 + 1
+  );
+  raycaster.setFromCamera(mouse, camera);
+  const meshHits = raycaster.intersectObjects(nodeGroup.children, false);
+  if (meshHits.length) {
+    state.selected = { type: 'entity', id: meshHits[0].object.userData.entityId };
+    renderInfoCard();
+    return;
+  }
+  const lineHits = raycaster.intersectObjects(linkGroup.children, false);
+  if (lineHits.length) {
+    state.selected = { type: 'relation', id: lineHits[0].object.userData.relationId };
+    renderInfoCard();
+    return;
+  }
+  state.selected = null;
+  renderInfoCard();
+});
+
+function renderInfoCard() {
+  const card = $('info-card');
+  if (!state.selected) { card.style.display = 'none'; return; }
+  if (state.selected.type === 'entity') {
+    const m = state.entityMap.get(state.selected.id);
+    if (!m) { card.style.display = 'none'; return; }
+    const e = m.entity;
+    let attrHtml = '';
+    for (const [k, v] of Object.entries(m.attrs)) attrHtml += `<div class="kv"><b>${escapeHtml(k)}</b>: ${escapeHtml(String(v))}</div>`;
+    const relsInScope = (state.ego ? calcEgo(state.ego.centerId, state.ego.depth).relations : state.relations);
+    const relCount = relsInScope.filter((r) => r.source_id === e.id || r.target_id === e.id).length;
+    const imgCount = state.imageCounts.get(e.id) || 0;
+    const imgs = state.entityImages.get(e.id);
+    let imgHtml = '';
+    if (imgCount > 0 || (imgs && imgs.length)) {
+      const rows = imgs || [];
+      imgHtml = `<div id="img-section"><div class="kv"><b>图片 ${rows.length || imgCount}</b> 张</div><div id="img-grid">` +
+        rows.map((im, i) => `<img src="${escapeHtml(im.url)}" title="${escapeHtml(im.caption || im.filename)}" onclick="openLightbox(${e.id},${i})">`).join('') +
+        (rows.length ? '' : '<span class="kv">加载中…</span>') + '</div></div>';
+    }
+    const levelHtml = m.level !== null && m.level !== undefined ? `<div class="kv">层级: <b style="color:${levelColor(m.level)}">L${m.level}</b>${m.level === 0 ? '（中心）' : ''}</div>` : '';
+    card.innerHTML = `
+      <h4>${escapeHtml(e.name)} <span class="tag" style="color:${ENTITY_STYLE[e.category].css};border-color:${ENTITY_STYLE[e.category].css}55">${e.category} · ${ENTITY_STYLE[e.category].shape}</span></h4>
+      <div class="kv">id: ${e.id}　来源: ${e.source}</div>
+      <div class="kv">创建: ${e.created_at}</div>
+      ${levelHtml}
+      <div class="kv">关联关系: ${relCount} 条</div>
+      ${attrHtml || '<div class="kv">（无属性）</div>'}
+      ${imgHtml}
+      <div class="btns">
+        <button onclick="focusEgo(${e.id})">以此为中心</button>
+        <button onclick="$('entity-img-input').click()">绑图片</button>
+      </div>
+      <div class="btns"><button onclick="editEntity(${e.id})">编辑</button><button class="danger" onclick="delEntity(${e.id})">删除</button></div>`;
+    card.style.display = 'block';
+    if (imgCount > 0 && !imgs) loadEntityImages(e.id);
+  } else {
+    const r = state.relations.find((x) => x.id === state.selected.id);
+    if (!r) { card.style.display = 'none'; return; }
+    const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
+    card.innerHTML = `
+      <h4>${escapeHtml(r.name)} <span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}关系</span></h4>
+      <div class="kv"><b>${s ? escapeHtml(s.entity.name) : '?'}</b> --&gt; <b>${t ? escapeHtml(t.entity.name) : '?'}</b></div>
+      <div class="kv">id: ${r.id}　来源: ${r.source}</div>
+      <div class="btns"><button class="danger" onclick="delRelation(${r.id})">删除</button></div>`;
+    card.style.display = 'block';
+  }
+}
+function escapeHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/* ================= 中心层级视图 ================= */
+// 前端本地BFS：与后端 /api/graph/ego 语义一致（双向、最短跳数），depth=null=全部层级
+function calcEgo(centerId, depth) {
+  const adj = new Map();
+  const touch = (id) => { if (!adj.has(id)) adj.set(id, []); };
+  for (const r of state.relations) {
+    touch(r.source_id); touch(r.target_id);
+    adj.get(r.source_id).push(r);
+    adj.get(r.target_id).push(r);
+  }
+  const maxDepth = Number.isInteger(depth) && depth > 0 ? depth : Infinity;
+  const level = new Map([[centerId, 0]]);
+  let frontier = [centerId];
+  while (frontier.length) {
+    const next = [];
+    for (const id of frontier) {
+      const cur = level.get(id);
+      if (cur >= maxDepth) continue;
+      for (const r of adj.get(id) || []) {
+        const other = r.source_id === id ? r.target_id : r.source_id;
+        if (!level.has(other)) { level.set(other, cur + 1); next.push(other); }
+      }
+    }
+    frontier = next;
+  }
+  return {
+    entities: state.entities.filter((e) => level.has(e.id)).map((e) => ({ ...e, level: level.get(e.id) })),
+    relations: state.relations.filter((r) => level.has(r.source_id) && level.has(r.target_id)),
+  };
+}
+
+function updateEgoBar() {
+  const bar = $('ego-bar');
+  if (!state.ego) { bar.classList.remove('show'); return; }
+  const m = state.entityMap.get(state.ego.centerId) || state.entities.find((e) => e.id === state.ego.centerId);
+  $('ego-name').textContent = m ? (m.entity ? m.entity.name : m.name) : `#${state.ego.centerId}`;
+  $('ego-depth').value = state.ego.depth === null ? '' : String(state.ego.depth);
+  bar.classList.add('show');
+}
+
+function focusEgo(id) {
+  state.ego = { centerId: id, depth: null };
+  updateEgoBar();
+  rebuildGraph();
+  const m = state.entityMap.get(id);
+  toast(m ? `已进入中心模式：${m.entity.name}（全部层级）` : '已进入中心模式');
+}
+window.focusEgo = focusEgo;
+
+function exitEgo() {
+  state.ego = null;
+  updateEgoBar();
+  rebuildGraph();
+}
+window.exitEgo = exitEgo;
+
+$('ego-depth').addEventListener('change', () => {
+  if (!state.ego) return;
+  const raw = $('ego-depth').value.trim();
+  if (raw === '') { state.ego.depth = null; }
+  else {
+    const n = Number(raw);
+    if (!Number.isInteger(n) || n <= 0) { toast('层数必须为正整数（清空表示全部层级）', true); updateEgoBar(); return; }
+    state.ego.depth = n;
+  }
+  rebuildGraph();
+});
+$('ego-rebuild').addEventListener('click', () => { if (state.ego) rebuildGraph(); });
+$('ego-exit').addEventListener('click', exitEgo);
+
+/* ================= 实体图片绑定与灯箱 ================= */
+const imgInput = document.createElement('input');
+imgInput.type = 'file';
+imgInput.accept = 'image/jpeg,image/png,image/gif,image/webp,image/bmp';
+imgInput.multiple = true;
+imgInput.style.display = 'none';
+imgInput.id = 'entity-img-input';
+document.body.appendChild(imgInput);
+window.$ = $; // 信息卡内联onclick需访问$
+
+imgInput.addEventListener('change', async () => {
+  const id = state.selected && state.selected.type === 'entity' ? state.selected.id : null;
+  const files = [...imgInput.files];
+  imgInput.value = '';
+  if (!id || !files.length) return;
+  for (const f of files) {
+    try {
+      if (f.size > 10 * 1024 * 1024) throw new Error('超过10MB上限');
+      const b64 = await readAsB64(f);
+      let caption = '';
+      if (files.length === 1) caption = prompt('图片备注（可留空）', '') || '';
+      await api(`/api/entities/${id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, caption }) });
+      toast(`已绑定图片 ${f.name}`);
+    } catch (e) { toast(`图片 ${f.name} 绑定失败: ${e.message}`, true); }
+  }
+  state.entityImages.delete(id);
+  const cnt = await api(`/api/entities/${id}/images`);
+  state.entityImages.set(id, cnt);
+  state.imageCounts.set(id, cnt.length);
+  await refreshAll(false);
+  if (state.selected && state.selected.id === id) renderInfoCard();
+});
+
+async function loadEntityImages(entityId) {
+  try {
+    const rows = await api(`/api/entities/${entityId}/images`);
+    state.entityImages.set(entityId, rows);
+    if (state.selected && state.selected.type === 'entity' && state.selected.id === entityId) renderInfoCard();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ---- 灯箱 ---- */
+let lbState = null; // { list, idx }
+function openLightbox(entityId, idx) {
+  const list = state.entityImages.get(entityId) || [];
+  if (!list.length) return;
+  lbState = { list, idx };
+  renderLightbox();
+  $('lightbox').classList.add('show');
+}
+window.openLightbox = openLightbox;
+
+function renderLightbox() {
+  if (!lbState) return;
+  const im = lbState.list[lbState.idx];
+  $('lb-img').src = im.url;
+  $('lb-cap').textContent = (im.caption || im.filename) + `（实体#${im.entity_id}）`;
+  $('lb-pos').textContent = `${lbState.idx + 1} / ${lbState.list.length}`;
+}
+
+function closeLightbox() { $('lightbox').classList.remove('show'); lbState = null; }
+$('lb-close').addEventListener('click', closeLightbox);
+$('lightbox').addEventListener('click', (e) => { if (e.target === $('lightbox')) closeLightbox(); });
+$('lb-prev').addEventListener('click', () => { if (lbState) { lbState.idx = (lbState.idx - 1 + lbState.list.length) % lbState.list.length; renderLightbox(); } });
+$('lb-next').addEventListener('click', () => { if (lbState) { lbState.idx = (lbState.idx + 1) % lbState.list.length; renderLightbox(); } });
+document.addEventListener('keydown', (e) => {
+  if (!$('lightbox').classList.contains('show')) return;
+  if (e.key === 'Escape') closeLightbox();
+  if (e.key === 'ArrowLeft') $('lb-prev').click();
+  if (e.key === 'ArrowRight') $('lb-next').click();
+});
+
+async function delImage() {
+  if (!lbState) return;
+  const im = lbState.list[lbState.idx];
+  if (!confirm(`删除图片绑定「${im.filename}」？文件将从磁盘移除。`)) return;
+  try {
+    await api(`/api/images/${im.id}`, { method: 'DELETE' });
+    const eid = im.entity_id;
+    lbState.list.splice(lbState.idx, 1);
+    state.imageCounts.set(eid, lbState.list.length);
+    if (!lbState.list.length) closeLightbox(); else renderLightbox();
+    state.entityImages.set(eid, lbState.list);
+    renderEntityList();
+    toast('图片绑定已删除');
+    if (state.selected && state.selected.id === eid) renderInfoCard();
+  } catch (e) { toast(e.message, true); }
+}
+window.delImage = delImage;
+
+/* ================= 手机端抽屉 ================= */
+const isMobile = () => window.matchMedia('(max-width: 768px)').matches;
+function openDrawer(id) {
+  $(id).classList.add('open');
+  $('backdrop').classList.add('show');
+}
+function closeDrawers() {
+  $('panel-left').classList.remove('open');
+  $('panel-right').classList.remove('open');
+  $('backdrop').classList.remove('show');
+}
+$('m-left').addEventListener('click', () => {
+  const opened = $('panel-left').classList.contains('open');
+  closeDrawers();
+  if (!opened) openDrawer('panel-left');
+});
+$('m-right').addEventListener('click', () => {
+  const opened = $('panel-right').classList.contains('open');
+  closeDrawers();
+  if (!opened) openDrawer('panel-right');
+});
+$('backdrop').addEventListener('click', closeDrawers);
+$('m-legend').addEventListener('click', () => $('legend').classList.toggle('hidden'));
+if (isMobile()) $('legend').classList.add('hidden');
+
+/* ================= 面板逻辑 ================= */
+function initTabs() {
+  $('tabs').addEventListener('click', (e) => {
+    const t = e.target.closest('[data-tab]');
+    if (!t) return;
+    document.querySelectorAll('#tabs div').forEach((d) => d.classList.toggle('active', d === t));
+    document.querySelectorAll('.tabbody').forEach((b) => b.classList.toggle('active', b.id === 'tab-' + t.dataset.tab));
+    if (t.dataset.tab === 'log') loadLogs();
+    if (t.dataset.tab === 'version') loadHistory();
+  });
+}
+
+async function api(url, opts) {
+  const res = await fetch(url, opts);
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `请求失败(${res.status})`);
+  return data;
+}
+
+function fillCategorySelects(meta) {
+  const eSel = $('e-category'), rSel = $('r-category');
+  eSel.innerHTML = meta.entity_categories.map((c) => `<option value="${c}">${c}（${ENTITY_STYLE[c].shape}）</option>`).join('');
+  rSel.innerHTML = meta.relation_categories.map((c) => `<option value="${c}">${c}关系</option>`).join('');
+  $('legend').innerHTML = '<b>实体样式</b><br>' +
+    meta.entity_categories.map((c) => `<span class="sw" style="background:${ENTITY_STYLE[c].css}"></span>${c} · ${ENTITY_STYLE[c].shape}`).join('<br>') +
+    '<br><b>关系线型</b><br>' +
+    meta.relation_categories.map((c) => `<span class="ln ${RELATION_STYLE[c].dashed ? 'dash' : ''}" style="border-color:${RELATION_STYLE[c].css}"></span>${c}关系`).join('<br>');
+}
+
+function refreshEntityOptions() {
+  const opts = state.entities.map((e) => `<option value="${e.id}">#${e.id} ${escapeHtml(e.name)}（${e.category}）</option>`).join('');
+  $('r-source').innerHTML = opts || '<option value="">（请先创建实体）</option>';
+  $('r-target').innerHTML = opts || '<option value="">（请先创建实体）</option>';
+}
+
+function parseAttrs(text) {
+  const t = (text || '').trim();
+  if (!t) return {};
+  const obj = JSON.parse(t);
+  if (typeof obj !== 'object' || obj === null || Array.isArray(obj)) throw new Error('属性必须是JSON对象');
+  return obj;
+}
+
+async function submitEntity() {
+  try {
+    const body = {
+      name: $('e-name').value.trim(),
+      category: $('e-category').value,
+      attributes: parseAttrs($('e-attrs').value),
+    };
+    if (!body.name) return toast('请输入实体名称', true);
+    if (state.editingEntityId) {
+      await api(`/api/entities/${state.editingEntityId}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      toast('实体已更新');
+    } else {
+      await api('/api/entities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      toast('实体已添加');
+    }
+    cancelEditEntity();
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+function editEntity(id) {
+  const m = state.entityMap.get(id);
+  if (!m) return;
+  state.editingEntityId = id;
+  $('entity-form-title').textContent = `编辑实体 #${id}`;
+  $('e-name').value = m.entity.name;
+  $('e-category').value = m.entity.category;
+  $('e-attrs').value = JSON.stringify(m.attrs, null, 2);
+  $('e-submit').textContent = '保存修改';
+  $('e-cancel').style.display = '';
+  document.querySelector('[data-tab="entity"]').click();
+  if (isMobile()) openDrawer('panel-left');
+}
+window.editEntity = editEntity;
+
+function cancelEditEntity() {
+  state.editingEntityId = null;
+  $('entity-form-title').textContent = '新增实体';
+  $('e-name').value = '';
+  $('e-attrs').value = '';
+  $('e-submit').textContent = '添加';
+  $('e-cancel').style.display = 'none';
+}
+
+async function delEntity(id) {
+  const m = state.entityMap.get(id);
+  if (!m) return;
+  if (!confirm(`删除实体「${m.entity.name}」？其关联关系将一并删除。`)) return;
+  try {
+    await api(`/api/entities/${id}`, { method: 'DELETE' });
+    if (state.selected && state.selected.id === id) state.selected = null;
+    toast('实体已删除');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+window.delEntity = delEntity;
+
+async function submitRelation() {
+  try {
+    const body = {
+      source_id: Number($('r-source').value),
+      target_id: Number($('r-target').value),
+      name: $('r-name').value.trim(),
+      category: $('r-category').value,
+    };
+    if (!body.name) return toast('请输入关系名称', true);
+    if (!body.source_id || !body.target_id) return toast('请先创建实体', true);
+    await api('/api/relations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    $('r-name').value = '';
+    toast('关系已添加');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+
+async function delRelation(id) {
+  if (!confirm(`删除关系 #${id}？`)) return;
+  try {
+    await api(`/api/relations/${id}`, { method: 'DELETE' });
+    if (state.selected && state.selected.id === id) state.selected = null;
+    toast('关系已删除');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+window.delRelation = delRelation;
+
+function renderEntityList() {
+  $('e-list').innerHTML = state.entities.map((e) => {
+    const ic = state.imageCounts.get(e.id) || 0;
+    return `
+    <div class="list-item">
+      <div class="main">
+        <div class="name">${escapeHtml(e.name)}<span class="tag" style="color:${ENTITY_STYLE[e.category].css};border-color:${ENTITY_STYLE[e.category].css}55">${e.category}</span>${ic ? `<span class="tag img-tag">图 ${ic}</span>` : ''}</div>
+        <div class="sub">#${e.id} · ${e.source} · ${Object.keys(state.entityMap.get(e.id) ? state.entityMap.get(e.id).attrs : {}).length}个属性</div>
+      </div>
+      <button onclick="editEntity(${e.id})">编辑</button>
+      <button class="danger" onclick="delEntity(${e.id})">删</button>
+    </div>`;
+  }).join('') || '<div class="sub" style="color:#5c6f92">暂无实体</div>';
+}
+
+function renderRelationList() {
+  $('r-list').innerHTML = state.relations.map((r) => {
+    const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
+    return `
+    <div class="list-item">
+      <div class="main">
+        <div class="name">${escapeHtml(r.name)}<span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}</span></div>
+        <div class="sub">#${r.id} · ${s ? escapeHtml(s.entity.name) : '?'} → ${t ? escapeHtml(t.entity.name) : '?'} · ${r.source}</div>
+      </div>
+      <button class="danger" onclick="delRelation(${r.id})">删</button>
+    </div>`;
+  }).join('') || '<div class="sub" style="color:#5c6f92">暂无关系</div>';
+}
+
+async function loadLogs() {
+  try {
+    const logs = await api('/api/logs?limit=200');
+    $('log-list').innerHTML = logs.map((l) => `
+      <div class="log-item">
+        <div class="l1"><span>#${l.id} ${escapeHtml(l.op_type)}</span><span>${escapeHtml(l.source)}</span></div>
+        <div class="l1"><span style="color:#54617f">${l.created_at}</span></div>
+        <div class="l2">${escapeHtml(l.snapshot.length > 220 ? l.snapshot.slice(0, 220) + '…' : l.snapshot)}</div>
+      </div>`).join('') || '<div class="sub" style="color:#5c6f92">暂无日志</div>';
+  } catch (e) { toast(e.message, true); }
+}
+
+async function loadHistory() {
+  try {
+    const list = await api('/api/git/history');
+    $('v-list').innerHTML = list.map((c, i) => `
+      <div class="ver-item">
+        <div class="v1"><code>${c.short}</code><span style="color:#7ee787;font-size:10px">${i === 0 ? '当前' : ''}</span>
+          <span style="flex:1"></span>
+          ${i === 0 ? '' : `<button onclick="restoreTo('${c.hash}')">恢复此版本</button>`}
+        </div>
+        <div class="v2">${escapeHtml(c.title)}</div>
+        <div class="v3">${c.date} · ${escapeHtml(c.source || c.author)}${c.log_range ? ` · 覆盖日志 #${c.log_range[0]}-#${c.log_range[1]}` : ''}</div>
+      </div>`).join('') || '<div class="sub" style="color:#5c6f92">暂无保存点</div>';
+  } catch (e) { toast(e.message, true); }
+}
+
+async function restoreTo(hash) {
+  if (!confirm(`回溯到保存点 ${hash.slice(0, 8)}？当前未保存的修改会先自动备份。`)) return;
+  try {
+    await api('/api/git/restore', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ hash }) });
+    toast('已回溯到保存点 ' + hash.slice(0, 8));
+    state.selected = null;
+    await refreshAll();
+    loadHistory();
+  } catch (e) { toast(e.message, true); }
+}
+window.restoreTo = restoreTo;
+
+async function doSavepoint(message) {
+  try {
+    const r = await api('/api/git/savepoint', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) });
+    toast(r.committed ? `保存点已创建: ${r.hash}` : r.message);
+    $('v-message').value = '';
+    loadHistory();
+  } catch (e) { toast(e.message, true); }
+}
+
+/* ================= OpenCode 对话 ================= */
+function appendMsg(role, text, chips, chipWarn) {
+  const div = document.createElement('div');
+  div.className = 'msg ' + (role === 'user' ? 'user' : 'bot');
+  const who = role === 'user' ? '我' : role === 'agent' ? 'OpenCode' : '系统';
+  div.innerHTML = `<div class="who">${who}</div><div class="bubble">${escapeHtml(text)}</div>`;
+  if (chips && chips.length) {
+    const ops = document.createElement('div');
+    ops.className = 'ops';
+    ops.innerHTML = chips.map((c) => `<span class="chip ${chipWarn ? 'warn' : ''}">${escapeHtml(c)}</span>`).join('');
+    div.appendChild(ops);
+  }
+  $('messages').appendChild(div);
+  $('messages').scrollTop = $('messages').scrollHeight;
+  return div;
+}
+
+/* ================= 文档附件 ================= */
+let attachedFile = null;
+$('agent-file-btn').addEventListener('click', () => $('agent-file').click());
+$('agent-file').addEventListener('change', () => {
+  const f = $('agent-file').files[0];
+  if (!f) return;
+  if (f.size > 20 * 1024 * 1024) { toast('文件超过20MB上限，请拆分后导入', true); $('agent-file').value = ''; return; }
+  attachedFile = f;
+  $('file-chip-name').textContent = `${f.name}（${(f.size / 1024).toFixed(1)}KB）`;
+  $('file-chip').style.display = 'flex';
+});
+$('file-chip-del').addEventListener('click', () => {
+  attachedFile = null;
+  $('agent-file').value = '';
+  $('file-chip').style.display = 'none';
+});
+function readAsB64(file) {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(String(r.result).split(',')[1]);
+    r.onerror = () => reject(new Error('文件读取失败'));
+    r.readAsDataURL(file);
+  });
+}
+
+async function sendAgent() {
+  const input = $('agent-input');
+  const text = input.value.trim();
+  if (!text && !attachedFile) return;
+  if (!text && attachedFile) { input.value = `请把《${attachedFile.name}》转化为三元组并融合入库`; }
+  const finalText = input.value.trim();
+  input.value = '';
+  appendMsg('user', attachedFile ? `[附文档: ${attachedFile.name}] ${finalText}` : finalText);
+  const pending = appendMsg('agent', attachedFile
+    ? `OpenCode 正在按 kg-triples 技能处理《${attachedFile.name}》（分块抽取与融合，可能需要数分钟）…`
+    : 'OpenCode 正在执行指令（可能包含联网查证，最长等待5分钟）…');
+  $('agent-send').disabled = true;
+  try {
+    let r;
+    if (attachedFile) {
+      const b64 = await readAsB64(attachedFile);
+      r = await api('/api/agent/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: attachedFile.name, content_b64: b64, instruction: finalText }) });
+    } else {
+      r = await api('/api/agent', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ instruction: finalText }) });
+    }
+    pending.remove();
+    appendMsg('agent', r.report ? (r.report.reply || '（抽取完成）') : (r.reply || '（无文字回复）'));
+    if (r.retried) appendMsg('system', '检测到上次会话异常，已自动改用全新会话重试成功。', ['自动恢复'], true);
+    if (r.report) {
+      const rp = r.report;
+      let html = `<div class="report">导入报告《${escapeHtml(rp.filename)}》· 模式:${rp.mode === 'chunked' ? '分块' : '附件'}<br>` +
+        `处理块: ${rp.chunks_ok}/${rp.chunks}　<b>新建实体 ${rp.entities_added}</b>　<b>新增关系 ${rp.relations_added}</b>　更新/其他 ${rp.others}`;
+      if (rp.errors && rp.errors.length) html += '<br><span class="rerr">问题: ' + rp.errors.map(escapeHtml).join('<br>') + '</span>';
+      html += '</div>';
+      const div = document.createElement('div');
+      div.className = 'msg system';
+      div.innerHTML = `<div class="who">系统</div>${html}`;
+      $('messages').appendChild(div);
+      $('messages').scrollTop = $('messages').scrollHeight;
+    } else if (r.applied && r.applied.length) {
+      appendMsg('system', `已按RDF规范校验并写入 ${r.applied.length} 项操作：\n` +
+        r.applied.map((a) => `- ${a.op}: ${a.name || ''}#${a.id}`).join('\n'));
+    }
+    if (r.ops_found > 0 && (r.applied_total !== undefined ? !r.applied_total : (!r.applied || !r.applied.length))) {
+      appendMsg('system', `OpenCode 提交了 ${r.ops_found} 项操作，但被RDF校验拦截${r.apply_error ? '：' + r.apply_error : ''}。数据库保持上一个合规版本。`, ['已拦截'], true);
+    } else if (r.apply_error) {
+      appendMsg('system', '部分操作被拦截：' + r.apply_error, ['已拦截'], true);
+    }
+    if (r.parse_error) appendMsg('system', '输出协议解析警告: ' + r.parse_error);
+    const sp = r.savepoint;
+    if (sp && sp.committed) appendMsg('system', `已自动创建保存点 ${sp.hash}（与日志双向绑定）`);
+    await refreshAll();
+  } catch (e) {
+    pending.remove();
+    appendMsg('system', '执行失败: ' + e.message);
+  } finally {
+    $('file-chip-del').click();
+    $('agent-send').disabled = false;
+  }
+}
+
+/* ================= 数据刷新与同步 ================= */
+async function refreshAll(rebuild = true) {
+  const [graph, meta] = await Promise.all([api('/api/graph'), api('/api/meta')]);
+  state.entities = graph.entities;
+  state.relations = graph.relations;
+  state.version = meta.version;
+  state.imageCounts = new Map((graph.image_counts || []).map((x) => [Number(x.entity_id), x.count]));
+  // 中心实体被删除或回溯消失时自动退出中心模式
+  if (state.ego && !state.entities.find((e) => e.id === state.ego.centerId)) {
+    state.ego = null;
+    updateEgoBar();
+  }
+  $('stat-badge').textContent = `实体 ${meta.counts.entities} / 关系 ${meta.counts.relations} / 日志 ${meta.counts.logs}`;
+  const badge = $('agent-badge');
+  if (meta.agent_available) { badge.textContent = 'OpenCode 已就绪'; badge.className = 'badge ok'; }
+  else { badge.textContent = 'OpenCode 未安装'; badge.className = 'badge off'; }
+  refreshEntityOptions();
+  rebuildGraph();
+  renderEntityList();
+  renderRelationList();
+}
+
+function initPolling() {
+  setInterval(async () => {
+    try {
+      const meta = await api('/api/meta');
+      if (meta.version !== state.version) await refreshAll();
+    } catch (_) { /* 本地服务短暂不可达时静默重试 */ }
+  }, 3000);
+}
+
+/* ================= 事件绑定与启动 ================= */
+initTabs();
+$('e-submit').addEventListener('click', submitEntity);
+$('e-cancel').addEventListener('click', cancelEditEntity);
+$('r-submit').addEventListener('click', submitRelation);
+$('agent-send').addEventListener('click', sendAgent);
+$('agent-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAgent(); }
+});
+$('btn-savepoint').addEventListener('click', () => doSavepoint(''));
+$('v-save').addEventListener('click', () => doSavepoint($('v-message').value));
+$('btn-export').addEventListener('click', () => window.open('/api/export/rdf', '_blank'));
+$('btn-relayout').addEventListener('click', () => {
+  for (const nd of simNodes) {
+    nd.pos.set((Math.random() - 0.5) * 180, (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 180);
+    nd.vel.set(0, 0, 0);
+  }
+  simBudget = 420;
+});
+$('btn-resetview').addEventListener('click', () => {
+  camera.position.set(0, 90, 260);
+  controls.target.set(0, 0, 0);
+});
+
+(async function boot() {
+  resize();
+  try {
+    const meta = await api('/api/meta');
+    fillCategorySelects(meta);
+    await refreshAll();
+  } catch (e) {
+    toast('后端连接失败: ' + e.message, true);
+  }
+  initPolling();
+})();
+</script>
+</body>
+</html>

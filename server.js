@@ -86,12 +86,13 @@ function cleanupImageFiles(storedPaths) {
 api.get('/entities/:id/images', (req, res) => {
   const id = Number(req.params.id);
   if (!db.getEntity(id)) return res.status(404).json({ error: `实体id=${id} 不存在` });
-  res.json(db.listEntityImages(id).map((r) => ({ ...r, url: '/uploads/' + r.stored_path.replace(/^uploads[\\/]/, '') })));
+  const rel = (p) => (p ? '/uploads/' + p.replace(/^uploads[\\/]/, '') : null);
+  res.json(db.listEntityImages(id).map((r) => ({ ...r, url: rel(r.stored_path), thumb_url: rel(r.thumb_path) || rel(r.stored_path) })));
 });
 
 api.post('/entities/:id/images', (req, res) => {
   const id = Number(req.params.id);
-  const { filename, content_b64, caption } = req.body || {};
+  const { filename, content_b64, caption, thumb_b64 } = req.body || {};
   if (!filename || !content_b64) return res.status(400).json({ error: '必须提供文件名与内容(content_b64)' });
   const ext = path.extname(String(filename)).toLowerCase();
   if (!IMAGE_EXTS.includes(ext)) return res.status(400).json({ error: `仅支持图片格式: ${IMAGE_EXTS.join(' ')}` });
@@ -105,18 +106,30 @@ api.post('/entities/:id/images', (req, res) => {
   const safe = path.basename(String(filename)).replace(/[^\w.\-\u4e00-\u9fa5]/g, '_').slice(0, 80) || 'image';
   const storedPath = path.join('uploads', `e${id}`, `${Date.now()}_${safe}`);
   fs.writeFileSync(path.join(git.DATA_DIR, storedPath), buf);
+  // 缩略图（前端canvas生成的小图，可选）：列表加载用，原图仅灯箱打开
+  let thumbPath = '';
+  if (thumb_b64) {
+    try {
+      const tbuf = Buffer.from(thumb_b64, 'base64');
+      if (tbuf.length > 0 && tbuf.length <= 2 * 1024 * 1024) {
+        thumbPath = path.join('uploads', `e${id}`, `${Date.now()}_thumb_${safe}`);
+        fs.writeFileSync(path.join(git.DATA_DIR, thumbPath), tbuf);
+      }
+    } catch (_) { thumbPath = ''; }
+  }
   try {
-    const row = db.addEntityImage(id, { filename, stored_path: storedPath, caption });
-    res.json({ ...row, url: '/uploads/' + storedPath.replace(/\\/g, '/').replace(/^uploads\//, '') });
+    const row = db.addEntityImage(id, { filename, stored_path: storedPath, caption, thumb_path: thumbPath });
+    const rel = (p) => (p ? '/uploads/' + p.replace(/^uploads[\\/]/, '') : null);
+    res.json({ ...row, url: rel(row.stored_path), thumb_url: rel(row.thumb_path) || rel(row.stored_path) });
   } catch (e) {
-    cleanupImageFiles([storedPath]); // 入库失败时回滚文件，避免孤儿文件
+    cleanupImageFiles([storedPath, thumbPath]); // 入库失败时回滚文件，避免孤儿文件
     throw e;
   }
 });
 
 api.delete('/images/:imgId', (req, res) => {
   const row = db.deleteEntityImage(Number(req.params.imgId));
-  cleanupImageFiles([row.stored_path]);
+  cleanupImageFiles([row.stored_path, row.thumb_path].filter(Boolean));
   res.json({ deleted: row });
 });
 
@@ -241,6 +254,17 @@ api.post('/graph/import', (req, res) => {
     for (const t of ['entities', 'relations', 'operation_logs']) {
       if (!tables.includes(t)) return res.status(400).json({ error: `缺少必需的数据表 ${t}，这不是本系统的图谱文件` });
     }
+    // 列齐全校验：防止残缺schema的库导入后运行期才出错
+    const REQUIRED_COLS = {
+      entities: ['id', 'name', 'category', 'attributes', 'source', 'created_at'],
+      relations: ['id', 'source_id', 'target_id', 'name', 'category', 'created_at'],
+      operation_logs: ['id', 'action', 'entity_id', 'relation_id', 'detail', 'source', 'created_at'],
+    };
+    for (const [t, cols] of Object.entries(REQUIRED_COLS)) {
+      const actual = probe.prepare(`PRAGMA table_info(${t})`).all().map((c) => c.name);
+      const missing = cols.filter((c) => !actual.includes(c));
+      if (missing.length) return res.status(400).json({ error: `表 ${t} 缺少必需字段: ${missing.join(', ')}` });
+    }
     importedMaxLog = probe.prepare('SELECT COALESCE(MAX(id),0) AS m FROM operation_logs').get().m;
     counts = {
       entities: probe.prepare('SELECT COUNT(*) AS c FROM entities').get().c,
@@ -357,6 +381,11 @@ function docInstruction(filename, i, n, userInstruction) {
   return s;
 }
 
+// 文档导入进度（内存态，供前端轮询；docId=本次导入的时间戳标识）
+let docProgress = { active: false, stage: 'idle', chunk: 0, chunks: 0, mode: '', filename: '' };
+
+api.get('/agent/doc/progress', (req, res) => res.json(docProgress));
+
 api.post('/agent/doc', async (req, res) => {
   const { filename, content_b64, instruction } = req.body || {};
   if (!filename || !content_b64) return res.status(400).json({ error: '必须提供文件名与内容(content_b64)' });
@@ -364,6 +393,7 @@ api.post('/agent/doc', async (req, res) => {
   try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'content_b64不是合法的base64' }); }
   if (!buf.length) return res.status(400).json({ error: '文件内容为空' });
   if (buf.length > MAX_DOC_BYTES) return res.status(400).json({ error: `文件超过${MAX_DOC_BYTES / 1024 / 1024}MB上限，请拆分后导入` });
+  docProgress = { active: true, stage: 'preparing', chunk: 0, chunks: 0, mode: '', filename: safeName(filename) };
 
   const name = safeName(filename);
   const ext = path.extname(name).toLowerCase();
@@ -405,10 +435,13 @@ api.post('/agent/doc', async (req, res) => {
       report.mode = 'chunked';
       const chunks = splitChunks(buf.toString('utf8'));
       if (chunks.length > MAX_CHUNKS) {
+        docProgress = { ...docProgress, active: false, stage: 'error' };
         return res.status(400).json({ error: `文档分块后达${chunks.length}块（上限${MAX_CHUNKS}），请拆分后导入` });
       }
       report.chunks = chunks.length;
+      docProgress = { ...docProgress, mode: 'chunked', chunks: chunks.length, stage: 'importing' };
       for (let i = 0; i < chunks.length; i++) {
+        docProgress = { ...docProgress, chunk: i + 1 };
         const inst = `${docInstruction(name, i + 1, chunks.length, instruction)}\n【文本块内容】\n<<<\n${chunks[i]}\n>>>`;
         const r = doApply(await agent.runAgent(inst));
         if (!r.ok) break; // agent层错误（超时/服务错误）时终止后续块
@@ -417,9 +450,11 @@ api.post('/agent/doc', async (req, res) => {
       // 小文本或PDF/Word等二进制文档：整体作为附件交给OpenCode（kg-triples技能）
       report.mode = 'attached';
       report.chunks = 1;
+      docProgress = { ...docProgress, mode: 'attached', chunks: 1, chunk: 1, stage: 'importing' };
       const inst = docInstruction(name, 1, 1, instruction) + ' 文档已作为附件挂载，请先读取再抽取。';
       doApply(await agent.runAgent(inst, [savedPath]));
     }
+    docProgress = { ...docProgress, active: true, stage: 'savepoint' };
   } finally {
     try { fs.unlinkSync(savedPath); } catch (_) { /* 保留亦可 */ }
   }
@@ -429,6 +464,7 @@ api.post('/agent/doc', async (req, res) => {
   try {
     savepoint = git.savepoint(`文档导入: ${name}（实体+${report.entities_added} 关系+${report.relations_added}）`, 'OpenCode');
   } catch (e) { savepoint = { committed: false, message: e.message }; }
+  docProgress = { active: false, stage: report.errors.length && !report.chunks_ok ? 'error' : 'done', chunk: docProgress.chunk, chunks: docProgress.chunks, mode: report.mode, filename: name };
 
   res.json({ report, applied_total: report.entities_added + report.relations_added + report.others, savepoint, retried: false });
 });
@@ -455,6 +491,7 @@ function checkAgent() {
 
 function bootstrap() {
   git.ensureRepo();
+  git.backupCopy(true); // 启动时强制留一份滚动副本，目录损坏时仍有外部备份可救
   try {
     db.open();
   } catch (e) {
@@ -498,8 +535,9 @@ function seedIfEmpty() {
 
 bootstrap();
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`本地知识图谱整合器已启动: http://localhost:${PORT}`);
+const HOST = process.env.KG_HOST || '127.0.0.1';
+app.listen(PORT, HOST, () => {
+  console.log(`本地知识图谱整合器已启动: http://localhost:${PORT} (监听${HOST}${HOST === '127.0.0.1' ? '，如需局域网访问设 KG_HOST=0.0.0.0' : '，已暴露到局域网'})`);
   console.log('数据文件: data/kg.db (本地Git仓库托管，可打保存点/回溯)');
   console.log('全流程本地运行，仅OpenCode可联网补全公开信息');
 });

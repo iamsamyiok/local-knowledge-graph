@@ -28,10 +28,14 @@ const TOOLS = [
   },
   {
     name: 'kg_list_entities',
-    description: '列出全部实体（可选按category过滤）',
+    description: '列出实体（可选按category过滤，limit/offset分页）。返回total便于翻页',
     inputSchema: {
       type: 'object',
-      properties: { category: { type: 'string', description: '按大类过滤：人物/地点/组织/概念' } },
+      properties: {
+        category: { type: 'string', description: '按大类过滤：物理实体/抽象实体/数值实体/时间实体' },
+        limit: { type: 'number', description: '单页条数，默认100，最大500' },
+        offset: { type: 'number', description: '起始偏移，默认0' },
+      },
     },
   },
   {
@@ -44,8 +48,14 @@ const TOOLS = [
   },
   {
     name: 'kg_get_graph',
-    description: '获取完整图谱（全部实体与关系）。实体较多时建议先用kg_ego或kg_search缩小范围',
-    inputSchema: { type: 'object', properties: {} },
+    description: '获取图谱（实体+关系）。默认按limit截断防止超大输出；通常优先用kg_ego/kg_search缩小范围',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        entity_limit: { type: 'number', description: '实体上限，默认300，最大2000' },
+        relation_limit: { type: 'number', description: '关系上限，默认1000，最大5000' },
+      },
+    },
   },
   {
     name: 'kg_ego',
@@ -131,7 +141,10 @@ const HANDLERS = {
   kg_list_entities: async (args) => {
     let ents = db.listEntities();
     if (args.category) ents = ents.filter((e) => e.category === args.category);
-    return { count: ents.length, entities: ents };
+    const total = ents.length;
+    const limit = Math.max(1, Math.min(Number(args.limit) || 100, 500));
+    const offset = Math.max(0, Number(args.offset) || 0);
+    return { total, count: Math.min(limit, total - offset), offset, entities: ents.slice(offset, offset + limit) };
   },
   kg_get_entity: async (args) => {
     let e = null;
@@ -145,7 +158,18 @@ const HANDLERS = {
     const rels = db.listRelations().filter((r) => r.source_id === e.id || r.target_id === e.id);
     return { entity: e, relations: rels };
   },
-  kg_get_graph: async () => db.getGraph(),
+  kg_get_graph: async (args) => {
+    const g = db.getGraph();
+    const eLimit = Math.max(1, Math.min(Number(args.entity_limit) || 300, 2000));
+    const rLimit = Math.max(1, Math.min(Number(args.relation_limit) || 1000, 5000));
+    return {
+      total_entities: g.entities.length,
+      total_relations: g.relations.length,
+      truncated: g.entities.length > eLimit || g.relations.length > rLimit,
+      entities: g.entities.slice(0, eLimit),
+      relations: g.relations.slice(0, rLimit),
+    };
+  },
   kg_ego: async (args) => {
     const { id } = resolveCenter(String(args.center));
     let depth = null;

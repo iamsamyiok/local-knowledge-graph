@@ -3,8 +3,12 @@
   "version": "1.0.0",
   "description": "本地知识图谱信息整合器：3D可视化 + 双操作模式 + Git回溯 + RDF合规",
   "main": "server.js",
+  "engines": {
+    "node": ">=22.5"
+  },
   "scripts": {
-    "start": "node --no-warnings server.js"
+    "start": "node --no-warnings server.js",
+    "test": "node --test test/"
   },
   "dependencies": {
     "express": "^4.22.3"

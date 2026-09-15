@@ -612,6 +612,8 @@ scene.add(nodeGroup, linkGroup, labelGroup);
 const simNodes = [];   // { id, pos:Vector3, vel:Vector3, mesh, radius }
 const simLinks = [];   // { id, a, b, line, label, dashed }
 let simBudget = 0;
+let simFrame = 0;    // 隔帧斥力计数
+let settleCount = 0; // 连续安静帧数，达45帧判定布局收敛并休眠模拟
 
 function resize() {
   const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -734,6 +736,7 @@ function rebuildGraph() {
     try { attrs = JSON.parse(e.attributes || '{}'); } catch (_) {}
     const lvlTag = sub ? ` L${e.level}` : '';
     const label = makeLabelSprite(e.name + lvlTag, ENTITY_STYLE[e.category] ? ENTITY_STYLE[e.category].css : '#ccc', 34);
+    label.userData.text = e.name + lvlTag;
     labelGroup.add(label);
 
     state.entityMap.set(e.id, { entity: e, mesh, label, attrs, level: sub ? e.level : null });
@@ -756,6 +759,7 @@ function rebuildGraph() {
     const mid = a.pos.clone().add(b.pos).multiplyScalar(0.5);
     // 线标注显示具体关系名（如"父子"），线型/颜色仍由大类规定
     const lbl = makeLabelSprite(r.name, st.css, 24);
+    lbl.userData.text = r.name;
     lbl.position.copy(mid);
     labelGroup.add(lbl);
     simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
@@ -783,6 +787,7 @@ function rebuildGraph() {
   }
 
   simBudget = 420;
+  settleCount = 0;
   $('empty-hint').style.display = N ? 'none' : 'block';
   if (sub) $('empty-hint').innerHTML = '该范围内暂无实体';
   renderInfoCard();
@@ -791,17 +796,21 @@ function rebuildGraph() {
 function simStep() {
   const n = simNodes.length;
   const REP = 2600, SPRING = 0.01, REST = 78, CENTER = 0.006, DAMP = 0.86;
-  for (let i = 0; i < n; i++) {
-    for (let j = i + 1; j < n; j++) {
-      const A = simNodes[i], B = simNodes[j];
-      const dx = A.pos.x - B.pos.x, dy = A.pos.y - B.pos.y, dz = A.pos.z - B.pos.z;
-      let d2 = dx * dx + dy * dy + dz * dz;
-      if (d2 < 4) d2 = 4;
-      const d = Math.sqrt(d2);
-      const f = REP / d2;
-      const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f;
-      A.vel.x += fx; A.vel.y += fy; A.vel.z += fz;
-      B.vel.x -= fx; B.vel.y -= fy; B.vel.z -= fz;
+  // 大图隔帧斥力：>240节点时偶数帧复用上一帧斥力，近似减半计算量
+  const skipRep = n > 240 && (simFrame++ % 2 === 1);
+  if (!skipRep) {
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const A = simNodes[i], B = simNodes[j];
+        const dx = A.pos.x - B.pos.x, dy = A.pos.y - B.pos.y, dz = A.pos.z - B.pos.z;
+        let d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < 4) d2 = 4;
+        const d = Math.sqrt(d2);
+        const f = REP / d2;
+        const fx = (dx / d) * f, fy = (dy / d) * f, fz = (dz / d) * f;
+        A.vel.x += fx; A.vel.y += fy; A.vel.z += fz;
+        B.vel.x -= fx; B.vel.y -= fy; B.vel.z -= fz;
+      }
     }
   }
   for (const l of simLinks) {
@@ -816,7 +825,10 @@ function simStep() {
     nd.vel.multiplyScalar(DAMP);
     nd.vel.addScaledVector(nd.pos, -CENTER);
     nd.pos.add(nd.vel);
+    // 收敛检测：本帧有节点位移明显则重置安静计数
+    if (nd.vel.lengthSq() > 0.09) settleCount = 0;
   }
+  settleCount++;
   for (const l of simLinks) {
     const posAttr = l.line.geometry.attributes.position;
     posAttr.setXYZ(0, l.a.pos.x, l.a.pos.y, l.a.pos.z);
@@ -833,7 +845,7 @@ function simStep() {
 
 function animate() {
   requestAnimationFrame(animate);
-  if (simBudget > 0) { simStep(); simBudget--; }
+  if (simBudget > 0 && settleCount < 45) { simStep(); simBudget--; }
   // 选中实体呼吸高亮（叠加自定义尺寸系数）
   for (const nd of simNodes) nd.mesh.scale.setScalar(nd.sizeScale || 1);
   if (state.selected && state.selected.type === 'entity') {
@@ -899,7 +911,7 @@ function renderInfoCard() {
     if (imgCount > 0 || (imgs && imgs.length)) {
       const rows = imgs || [];
       imgHtml = `<div id="img-section"><div class="kv"><b>图片 ${rows.length || imgCount}</b> 张</div><div id="img-grid">` +
-        rows.map((im, i) => `<img src="${escapeHtml(im.url)}" title="${escapeHtml(im.caption || im.filename)}" onclick="openLightbox(${e.id},${i})">`).join('') +
+        rows.map((im, i) => `<img src="${escapeHtml(im.thumb_url || im.url)}" title="${escapeHtml(im.caption || im.filename)}" onclick="openLightbox(${e.id},${i})">`).join('') +
         (rows.length ? '' : '<span class="kv">加载中…</span>') + '</div></div>';
     }
     const levelHtml = m.level !== null && m.level !== undefined ? `<div class="kv">层级: <b style="color:${levelColor(m.level)}">L${m.level}</b>${m.level === 0 ? '（中心）' : ''}</div>` : '';
@@ -1048,9 +1060,10 @@ imgInput.addEventListener('change', async () => {
     try {
       if (f.size > 10 * 1024 * 1024) throw new Error('超过10MB上限');
       const b64 = await readAsB64(f);
+      const thumb = await makeThumbB64(f);
       let caption = '';
       if (files.length === 1) caption = prompt('图片备注（可留空）', '') || '';
-      await api(`/api/entities/${id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, caption }) });
+      await api(`/api/entities/${id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, caption, thumb_b64: thumb }) });
       toast(`已绑定图片 ${f.name}`);
     } catch (e) { toast(`图片 ${f.name} 绑定失败: ${e.message}`, true); }
   }
@@ -1061,6 +1074,21 @@ imgInput.addEventListener('change', async () => {
   await refreshAll(false);
   if (state.selected && state.selected.id === id) renderInfoCard();
 });
+
+// canvas 生成 320px 缩略图（jpeg 0.72），失败时返回 null 由服务端回退原图
+async function makeThumbB64(file) {
+  try {
+    if (!window.createImageBitmap) return null;
+    const bmp = await createImageBitmap(file);
+    const scale = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement('canvas');
+    c.width = Math.max(1, Math.round(bmp.width * scale));
+    c.height = Math.max(1, Math.round(bmp.height * scale));
+    c.getContext('2d').drawImage(bmp, 0, 0, c.width, c.height);
+    bmp.close && bmp.close();
+    return c.toDataURL('image/jpeg', 0.72).split(',')[1];
+  } catch (_) { return null; }
+}
 
 async function loadEntityImages(entityId) {
   try {
@@ -1410,9 +1438,20 @@ async function sendAgent() {
     ? `OpenCode 正在按 kg-triples 技能处理《${attachedFile.name}》（分块抽取与融合，可能需要数分钟）…`
     : 'OpenCode 正在执行指令（可能包含联网查证，最长等待5分钟）…');
   $('agent-send').disabled = true;
+  let progressTimer = null;
   try {
     let r;
     if (attachedFile) {
+      // 轮询导入进度，实时更新占位消息
+      progressTimer = setInterval(async () => {
+        try {
+          const p = await api('/api/agent/doc/progress');
+          if (!p.active) return;
+          const stageTxt = p.stage === 'importing' ? `抽取第 ${p.chunk}/${p.chunks} 块` : p.stage === 'savepoint' ? '创建保存点' : '准备中';
+          const bubble = pending.querySelector('.bubble');
+          if (bubble) bubble.textContent = `OpenCode 正在按 kg-triples 技能处理《${p.filename}》：${stageTxt}…`;
+        } catch (_) { /* 进度查询失败静默 */ }
+      }, 1500);
       const b64 = await readAsB64(attachedFile);
       r = await api('/api/agent/doc', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: attachedFile.name, content_b64: b64, instruction: finalText }) });
     } else {
@@ -1449,12 +1488,52 @@ async function sendAgent() {
     pending.remove();
     appendMsg('system', '执行失败: ' + e.message);
   } finally {
+    if (progressTimer) clearInterval(progressTimer);
     $('file-chip-del').click();
     $('agent-send').disabled = false;
   }
 }
 
 /* ================= 视图设置面板（主题自定义，桌面端） ================= */
+// 主题轻量路径：颜色/大小/线型变化只更新材质与标签sprite，保留力导向布局位置（免全量重建卡顿）
+function relabel(sprite, css, fontSize) {
+  if (!sprite || !sprite.userData.text) return;
+  const fresh = makeLabelSprite(sprite.userData.text, css, fontSize);
+  fresh.position.copy(sprite.position);
+  labelGroup.remove(sprite);
+  labelGroup.add(fresh);
+  return fresh;
+}
+
+function applyStyleLight(dirty) {
+  for (const cat of dirty.entity) {
+    const st = ENTITY_STYLE[cat];
+    for (const nd of simNodes) {
+      const m = state.entityMap.get(nd.id);
+      if (!m || m.entity.category !== cat) continue;
+      if (nd.mesh.material.color) nd.mesh.material.color.setHex(st.color);
+      nd.sizeScale = st.size || 1;
+      const fresh = relabel(nd.label, st.css, 34);
+      if (fresh) nd.label = fresh;
+    }
+  }
+  for (const cat of dirty.relation) {
+    const st = RELATION_STYLE[cat];
+    const op = st.opacity === undefined ? 0.9 : st.opacity;
+    for (const l of simLinks) {
+      const r = state.relations.find((x) => x.id === l.id);
+      if (!r || r.category !== cat) continue;
+      l.line.material = st.dashed
+        ? new THREE.LineDashedMaterial({ color: st.color, dashSize: st.dashSize || 6, gapSize: st.gapSize || 4, transparent: true, opacity: op })
+        : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: op });
+      if (st.dashed) l.line.computeLineDistances();
+      l.dashed = st.dashed;
+      const fresh = relabel(l.label, st.css, 24);
+      if (fresh) l.label = fresh;
+    }
+  }
+}
+
 function renderStylePanel() {
   const p = $('style-panel');
   const entRows = Object.keys(ENTITY_STYLE).map((c) => `
@@ -1495,6 +1574,7 @@ function renderStylePanel() {
     rebuildGraph();
     toast('已恢复默认样式');
   });
+  const dirty = { entity: new Set(), relation: new Set() };
   p.querySelectorAll('input').forEach((inp) => {
     inp.addEventListener('input', () => {
       const sec = inp.dataset.sec, cat = inp.dataset.cat, key = inp.dataset.key;
@@ -1504,8 +1584,10 @@ function renderStylePanel() {
       else if (key === 'size') target.size = clampThemeSize(inp.value);
       else if (key === 'opacity') target.opacity = Number(inp.value);
       else target[key] = Math.max(1, Number(inp.value) || 6);
+      dirty[sec].add(cat);
       clearTimeout(p._t);
-      p._t = setTimeout(() => { renderLegend(); rebuildGraph(); }, 250);
+      // 面板全部参数均可轻量生效（材质+标签原位更新，保留布局位置）
+      p._t = setTimeout(() => { renderLegend(); applyStyleLight(dirty); dirty.entity.clear(); dirty.relation.clear(); }, 250);
     });
   });
 }
@@ -1715,6 +1797,7 @@ $('btn-relayout').addEventListener('click', () => {
     nd.vel.set(0, 0, 0);
   }
   simBudget = 420;
+  settleCount = 0;
 });
 $('btn-resetview').addEventListener('click', () => {
   camera.position.set(0, 90, 260);

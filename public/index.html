@@ -58,6 +58,8 @@
   }
   .tabs div.active { color: #7fd1ff; border-bottom-color: #1f6feb; background: #101a30; }
 
+  #btn-inference.active { background: #3b2d52; border-color: #c792ea; color: #c792ea; }
+
   .tabbody { flex: 1; overflow-y: auto; padding: 12px; display: none; }
   .tabbody.active { display: block; }
   .tabbody::-webkit-scrollbar, .messages::-webkit-scrollbar { width: 8px; }
@@ -246,6 +248,7 @@
   @media (max-width: 768px) {
     .m-btn { display: inline-block; background: #16233f; }
     #btn-style { display: none; }
+    #btn-inference { display: none; }
     #style-panel { display: none !important; }
 
     /* 隐藏大标题，所有功能按钮单行排布，最大化画布显示范围 */
@@ -313,6 +316,7 @@
     <button id="btn-relayout" title="重新进行力导向布局">重新布局</button>
     <button id="btn-resetview" title="重置相机视角">重置视角</button>
     <button id="btn-style" title="自定义实体/关系的颜色、大小与线型">视图设置</button>
+    <button id="btn-inference" title="叠加显示推理得到的隐性关系（虚线，OWL传递/对称/逆规则），点击推理边可查看推导依据">推理</button>
     <button id="m-file" class="m-btn" title="文件：打开/保存/另存">文件</button>
   </header>
 
@@ -448,8 +452,10 @@ const state = {
   entityMap: new Map(),
   version: -1,
   editingEntityId: null,
-  selected: null,          // {type:'entity'|'relation'|'inferred', id}
+  selected: null,          // {type:'entity'|'relation'|'inferred', id}（relation为正id，inferred为负id）
   ego: null,               // {centerId, depth: null=全部|正整数} 中心层级模式
+  showInferred: false,     // 是否叠加显示推理关系
+  inferredData: null,      // /api/inference 缓存 {inferred, entities, ontology}
   imageCounts: new Map(),  // entityId -> 图片数量
   entityImages: new Map(), // entityId -> [图片行]
   meta: null,              // /api/meta 缓存（图例与下拉框用）
@@ -730,6 +736,27 @@ function rebuildGraph() {
     simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
   });
 
+  // 推理关系叠加：虚化虚线 + "(推)"标注，负数id与库中显式关系区分；仅显示两端均在当前视图的边
+  if (state.showInferred && state.inferredData) {
+    const ids = new Set(ents.map((e) => e.id));
+    state.inferredData.inferred.forEach((ir, idx) => {
+      if (!ids.has(ir.source_id) || !ids.has(ir.target_id)) return;
+      const a = simNodes.find((n) => n.id === ir.source_id);
+      const b = simNodes.find((n) => n.id === ir.target_id);
+      if (!a || !b) return;
+      const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
+      const mat = new THREE.LineDashedMaterial({ color: 0xc792ea, dashSize: 3, gapSize: 5, transparent: true, opacity: 0.35 });
+      const line = new THREE.Line(geo, mat);
+      line.computeLineDistances();
+      line.userData.relationId = -(idx + 1);
+      linkGroup.add(line);
+      const lbl = makeLabelSprite(ir.name + '(推)', '#c792ea', 22);
+      lbl.position.copy(a.pos.clone().add(b.pos).multiplyScalar(0.5));
+      labelGroup.add(lbl);
+      simLinks.push({ id: line.userData.relationId, a, b, line, label: lbl, dashed: true });
+    });
+  }
+
   simBudget = 420;
   $('empty-hint').style.display = N ? 'none' : 'block';
   if (sub) $('empty-hint').innerHTML = '该范围内暂无实体';
@@ -867,7 +894,32 @@ function renderInfoCard() {
     card.style.display = 'block';
     if (imgCount > 0 && !imgs) loadEntityImages(e.id);
   } else {
-    const r = state.relations.find((x) => x.id === state.selected.id);
+    const rid = state.selected.id;
+    if (rid < 0) {
+      // 推理边（负id）：展示推导规则与依据链
+      const ir = state.inferredData && state.inferredData.inferred[-rid - 1];
+      if (!ir) { card.style.display = 'none'; return; }
+      const ename = (id) => { const m = state.entityMap.get(id); return m ? escapeHtml(m.entity.name) : '#' + id; };
+      const relById = new Map(state.relations.map((r) => [r.id, r]));
+      const edge = (r) => {
+        const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
+        return `${s ? escapeHtml(s.entity.name) : '#' + r.source_id} -${escapeHtml(r.name)}-> ${t ? escapeHtml(t.entity.name) : '#' + r.target_id}`;
+      };
+      let chain;
+      if (ir.rule.startsWith('传递')) chain = ir.via.map((id) => relById.get(id)).filter(Boolean).map(edge).join(' ，再 ');
+      else {
+        const r = relById.get(ir.via[0]);
+        chain = r ? `由显式关系「${edge(r)}」推得反向边` : '';
+      }
+      card.innerHTML = `
+        <h4>${escapeHtml(ir.name)}（推） <span class="tag" style="color:#c792ea;border-color:#c792ea55">${escapeHtml(ir.rule)}</span></h4>
+        <div class="kv"><b>${ename(ir.source_id)}</b> ==&gt; <b>${ename(ir.target_id)}</b></div>
+        ${chain ? `<div class="kv">推导依据: ${chain}</div>` : ''}
+        <div class="kv">隐性关系：仅推理展示，数据库中无此记录</div>`;
+      card.style.display = 'block';
+      return;
+    }
+    const r = state.relations.find((x) => x.id === rid);
     if (!r) { card.style.display = 'none'; return; }
     const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
     card.innerHTML = `
@@ -1520,6 +1572,10 @@ async function refreshAll(rebuild = true) {
   state.relations = graph.relations;
   state.version = meta.version;
   state.imageCounts = new Map((graph.image_counts || []).map((x) => [Number(x.entity_id), x.count]));
+  // 推理开关开启时同步刷新推理缓存，保证叠加边与新数据一致
+  if (state.showInferred) {
+    try { state.inferredData = await api('/api/inference'); } catch (_) { /* 保留旧缓存 */ }
+  }
   // 中心实体被删除或回溯消失时自动退出中心模式
   if (state.ego && !state.entities.find((e) => e.id === state.ego.centerId)) {
     state.ego = null;
@@ -1556,6 +1612,15 @@ $('agent-input').addEventListener('keydown', (e) => {
 $('btn-savepoint').addEventListener('click', () => doSavepoint(''));
 $('v-save').addEventListener('click', () => doSavepoint($('v-message').value));
 $('btn-export').addEventListener('click', () => window.open('/api/export/rdf', '_blank'));
+$('btn-inference').addEventListener('click', async () => {
+  state.showInferred = !state.showInferred;
+  $('btn-inference').classList.toggle('active', state.showInferred);
+  if (state.showInferred) {
+    try { state.inferredData = await api('/api/inference'); }
+    catch (_) { state.showInferred = false; $('btn-inference').classList.remove('active'); return; }
+  }
+  rebuildGraph();
+});
 $('btn-relayout').addEventListener('click', () => {
   for (const nd of simNodes) {
     nd.pos.set((Math.random() - 0.5) * 180, (Math.random() - 0.5) * 120, (Math.random() - 0.5) * 180);

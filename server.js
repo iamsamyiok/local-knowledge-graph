@@ -8,6 +8,7 @@ const git = require('./lib/git');
 const rdf = require('./lib/rdf');
 const agent = require('./lib/agent');
 const V = require('./lib/validator');
+const inference = require('./lib/inference');
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -126,6 +127,38 @@ api.delete('/relations/:id', (req, res) => res.json(db.deleteRelation(Number(req
 
 // ---------- 图谱 / 日志 ----------
 api.get('/graph', (req, res) => res.json(db.getGraph()));
+
+// 推理引擎：动态推导隐性关系（传递/对称/逆），可选限定中心实体
+api.get('/inference', (req, res) => {
+  const g = db.getGraph();
+  const inferred = inference.computeInferred(g);
+  const center = String(req.query.center || '').trim();
+  let result = inferred;
+  if (center) {
+    const byId = new Map(g.entities.map((e) => [e.id, e]));
+    let cid = null;
+    if (/^\d+$/.test(center)) {
+      if (byId.has(Number(center))) cid = Number(center);
+      else return res.status(404).json({ error: `实体"${center}"不存在` });
+    } else {
+      const cands = g.entities.filter((e) => e.name === center);
+      if (cands.length === 0) return res.status(404).json({ error: `实体"${center}"不存在` });
+      if (cands.length > 1) return res.status(409).json({ error: `实体名"${center}"存在${cands.length}个候选，请改用id`, candidates: cands.map((h) => ({ id: h.id, name: h.name, category: h.category })) });
+      cid = cands[0].id;
+    }
+    result = inferred.filter((i) => i.source_id === cid || i.target_id === cid);
+  }
+  const nodes = new Set();
+  for (const i of result) { nodes.add(i.source_id); nodes.add(i.target_id); }
+  res.json({ inferred: result, entities: g.entities.filter((e) => nodes.has(e.id)), ontology: inference.loadOntology() });
+});
+
+api.get('/ontology', (req, res) => res.json(inference.loadOntology()));
+
+api.put('/ontology', (req, res) => {
+  try { res.json(inference.saveOntology(req.body || {})); }
+  catch (e) { res.status(400).json({ error: '本体规则保存失败: ' + e.message }); }
+});
 api.get('/logs', (req, res) => res.json(db.getLogs(Number(req.query.limit) || 200)));
 
 // ---------- RDF导出 ----------

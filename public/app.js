@@ -256,6 +256,83 @@ function makeLabelSprite(text, cssColor, fontSize) {
   return sprite;
 }
 
+/* ---- 平行边弧形分离 ---- */
+// 同对节点多条关系时线弯曲错开：offset 为弧的偏移强度（0=直线），标签置于各弧顶
+const ARC_SEGMENTS = 16;
+function arcOffsetVec(dir, arc) {
+  // 弧偏移方向：取与边垂直的平面，按边序号均匀转开角度；强度=边长*比例，保证不同长度边分离度一致
+  const up = Math.abs(dir.y) > 0.92 ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  const u = new THREE.Vector3().crossVectors(dir, up).normalize();
+  const v = new THREE.Vector3().crossVectors(dir, u).normalize();
+  const ang = (arc.idx / arc.total) * Math.PI * 2 + 0.6; // 固定相位避免与常用方向重合
+  const strength = 0.14; // 弧顶偏移 = 边长 * strength
+  return u.multiplyScalar(Math.cos(ang)).add(v.multiplyScalar(Math.sin(ang))).multiplyScalar(dir.length() * strength);
+}
+
+// 曲线上参数 t∈[0,1] 的点：a→b 直线叠加抛物弧偏移（中点最大，两端为0）
+function arcPoint(out, a, b, dir, off, t) {
+  const sag = 4 * t * (1 - t);
+  out.set(
+    a.x + dir.x * t + off.x * sag,
+    a.y + dir.y * t + off.y * sag,
+    a.z + dir.z * t + off.z * sag
+  );
+  return out;
+}
+
+function makeRelLine(pa, pb, arc, color, dashed, opacity, dashSize, gapSize) {
+  const pts = [];
+  if (arc) {
+    const dir = pb.clone().sub(pa);
+    const off = arcOffsetVec(dir, arc);
+    for (let i = 0; i <= ARC_SEGMENTS; i++) pts.push(arcPoint(new THREE.Vector3(), pa, pb, dir, off, i / ARC_SEGMENTS).clone());
+  } else {
+    pts.push(pa.clone(), pb.clone());
+  }
+  const geo = new THREE.BufferGeometry().setFromPoints(pts);
+  const mat = dashed
+    ? new THREE.LineDashedMaterial({ color, dashSize, gapSize, transparent: true, opacity })
+    : new THREE.LineBasicMaterial({ color, transparent: true, opacity });
+  const line = new THREE.Line(geo, mat);
+  if (dashed) line.computeLineDistances();
+  return line;
+}
+
+// 每帧根据节点最新位置刷新弧线几何
+const _arcDir = new THREE.Vector3(), _arcOff = new THREE.Vector3(), _arcTmp = new THREE.Vector3();
+function updateRelLine(l) {
+  if (!l.arc) {
+    const posAttr = l.line.geometry.attributes.position;
+    posAttr.setXYZ(0, l.a.pos.x, l.a.pos.y, l.a.pos.z);
+    posAttr.setXYZ(1, l.b.pos.x, l.b.pos.y, l.b.pos.z);
+    posAttr.needsUpdate = true;
+    if (l.dashed) l.line.computeLineDistances();
+    l.label.position.copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
+    return;
+  }
+  _arcDir.subVectors(l.b.pos, l.a.pos);
+  _arcOff.copy(arcOffsetVec(_arcDir, l.arc));
+  const posAttr = l.line.geometry.attributes.position;
+  for (let i = 0; i <= ARC_SEGMENTS; i++) {
+    arcPoint(_arcTmp, l.a.pos, l.b.pos, _arcDir, _arcOff, i / ARC_SEGMENTS);
+    posAttr.setXYZ(i, _arcTmp.x, _arcTmp.y, _arcTmp.z);
+  }
+  posAttr.needsUpdate = true;
+  if (l.dashed) l.line.computeLineDistances();
+  // 标签置于弧顶（t=0.5）外移一点，跟随弧线弯曲
+  arcPoint(_arcTmp, l.a.pos, l.b.pos, _arcDir, _arcOff, 0.5);
+  const lift = _arcOff.clone().multiplyScalar(6);
+  l.label.position.copy(_arcTmp).add(lift);
+}
+
+function setRelLabelPos(lbl, pa, pb, arc) {
+  if (!arc) { lbl.position.copy(pa).add(pb).multiplyScalar(0.5); return; }
+  const dir = pb.clone().sub(pa);
+  const off = arcOffsetVec(dir, arc);
+  const p = arcPoint(new THREE.Vector3(), pa, pb, dir, off, 0.5);
+  lbl.position.copy(p).add(off.clone().multiplyScalar(6));
+}
+
 function buildNodeMesh(category) {
   const st = ENTITY_STYLE[category] || { color: 0xaaaaaa };
   let mesh;
@@ -338,6 +415,21 @@ function rebuildGraph() {
     simNodes.push({ id: e.id, pos: mesh.position.clone(), vel: new THREE.Vector3(), mesh, label, radius: 10, sizeScale: ENTITY_STYLE[e.category] ? (ENTITY_STYLE[e.category].size || 1) : 1 });
   });
 
+  // 同节点对的平行边统一编号：线作弧形分离，标签各置弧顶，避免文字与线完全重叠
+  const pairCount = new Map(); // 'a|b'(无向) -> 同对节点边的总数
+  for (const r of rels) {
+    const k = r.source_id < r.target_id ? `${r.source_id}|${r.target_id}` : `${r.target_id}|${r.source_id}`;
+    pairCount.set(k, (pairCount.get(k) || 0) + 1);
+  }
+  const pairSeen = new Map();
+  const arcOf = (r) => {
+    const k = r.source_id < r.target_id ? `${r.source_id}|${r.target_id}` : `${r.target_id}|${r.source_id}`;
+    const n = pairCount.get(k) || 1;
+    const i = pairSeen.get(k) || 0;
+    pairSeen.set(k, i + 1);
+    return n > 1 ? { idx: i, total: n } : null;
+  };
+
   rels.forEach((r) => {
     const a = simNodes.find((n) => n.id === r.source_id);
     const b = simNodes.find((n) => n.id === r.target_id);
@@ -347,21 +439,16 @@ function rebuildGraph() {
     const baseOp = st.opacity === undefined ? 0.9 : st.opacity;
     const op = conf === '存疑' ? Math.min(baseOp, 0.35) : baseOp; // 存疑降不透明度
     const dashed = st.dashed || conf === '推测';                  // 推测强制虚线
-    const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
-    const mat = dashed
-      ? new THREE.LineDashedMaterial({ color: st.color, dashSize: st.dashSize || 6, gapSize: st.gapSize || 4, transparent: true, opacity: op })
-      : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: op });
-    const line = new THREE.Line(geo, mat);
+    const arc = arcOf(r);
+    const line = makeRelLine(a.pos, b.pos, arc, st.color, dashed, op, st.dashSize || 6, st.gapSize || 4);
     line.userData.relationId = r.id;
     line.userData.baseOpacity = op;
     linkGroup.add(line);
-    const mid = a.pos.clone().add(b.pos).multiplyScalar(0.5);
-    // 线标注显示具体关系名（如"父子"），线型/颜色仍由大类规定
     const lbl = makeLabelSprite(r.name, st.css, 24);
     lbl.userData.text = r.name;
-    lbl.position.copy(mid);
+    setRelLabelPos(lbl, a.pos, b.pos, arc);
     labelGroup.add(lbl);
-    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed, confidence: conf });
+    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed, confidence: conf, arc });
   });
 
   // 推理关系叠加：虚化虚线 + "(推)"标注，负数id与库中显式关系区分；仅显示两端均在当前视图的边
@@ -372,16 +459,18 @@ function rebuildGraph() {
       const a = simNodes.find((n) => n.id === ir.source_id);
       const b = simNodes.find((n) => n.id === ir.target_id);
       if (!a || !b) return;
-      const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
-      const mat = new THREE.LineDashedMaterial({ color: 0xc792ea, dashSize: 3, gapSize: 5, transparent: true, opacity: 0.35 });
-      const line = new THREE.Line(geo, mat);
-      line.computeLineDistances();
+      // 推理边并入平行边分组：同对节点的显式边与推理边互不错开编号，仅继续排号
+      const k = ir.source_id < ir.target_id ? `${ir.source_id}|${ir.target_id}` : `${ir.target_id}|${ir.source_id}`;
+      const n = (pairCount.get(k) || 0) + 1;
+      pairCount.set(k, n);
+      const arc = n > 1 ? { idx: n - 1, total: n } : null;
+      const line = makeRelLine(a.pos, b.pos, arc, 0xc792ea, true, 0.35, 3, 5);
       line.userData.relationId = -(idx + 1);
       linkGroup.add(line);
       const lbl = makeLabelSprite(ir.name + '(推)', '#c792ea', 22);
-      lbl.position.copy(a.pos.clone().add(b.pos).multiplyScalar(0.5));
+      setRelLabelPos(lbl, a.pos, b.pos, arc);
       labelGroup.add(lbl);
-      simLinks.push({ id: line.userData.relationId, a, b, line, label: lbl, dashed: true });
+      simLinks.push({ id: line.userData.relationId, a, b, line, label: lbl, dashed: true, arc });
     });
   }
 
@@ -429,12 +518,7 @@ function simStep() {
   }
   settleCount++;
   for (const l of simLinks) {
-    const posAttr = l.line.geometry.attributes.position;
-    posAttr.setXYZ(0, l.a.pos.x, l.a.pos.y, l.a.pos.z);
-    posAttr.setXYZ(1, l.b.pos.x, l.b.pos.y, l.b.pos.z);
-    posAttr.needsUpdate = true;
-    if (l.dashed) l.line.computeLineDistances();
-    l.label.position.copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
+    updateRelLine(l);
   }
   for (const nd of simNodes) {
     nd.mesh.position.copy(nd.pos);

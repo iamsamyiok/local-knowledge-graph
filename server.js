@@ -10,6 +10,7 @@ const rdf = require('./lib/rdf');
 const agent = require('./lib/agent');
 const V = require('./lib/validator');
 const inference = require('./lib/inference');
+const recommend = require('./lib/recommend');
 const embeddings = require('./lib/embeddings');
 const askLib = require('./lib/ask');
 const updater = require('./lib/updater');
@@ -411,6 +412,45 @@ api.get('/inference', (req, res) => {
 });
 
 api.get('/ontology', (req, res) => res.json(inference.loadOntology()));
+
+// ---------- 关系推荐（共同邻居 + LLM判断） ----------
+api.get('/recommend', (req, res) => {
+  const g = db.getGraph();
+  const center = String(req.query.center || '').trim();
+  const opts = { limit: Number(req.query.limit) || 20 };
+  if (center) {
+    let cid = null;
+    if (/^\d+$/.test(center)) cid = Number(center);
+    else {
+      const cands = g.entities.filter((e) => e.name === center);
+      if (cands.length === 1) cid = cands[0].id;
+      else if (cands.length > 1) return res.status(409).json({ error: `实体名"${center}"存在${cands.length}个候选，请改用id`, candidates: cands.map((h) => ({ id: h.id, name: h.name, category: h.category })) });
+    }
+    if (cid && !g.entities.some((e) => e.id === cid)) return res.status(404).json({ error: `实体"${center}"不存在` });
+    if (cid) opts.centerId = cid;
+  }
+  res.json({ recommendations: recommend.computeCoNeighborRecs(g, opts) });
+});
+
+// LLM判断候选关系：只给建议，入库由前端确认后走人工接口
+api.post('/recommend/ai', async (req, res) => {
+  if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答、导入或智能检索），请稍后再试' });
+  const body = req.body || {};
+  const g = db.getGraph();
+  const byId = new Map(g.entities.map((e) => [e.id, e]));
+  const a = byId.get(Number(body.source_id));
+  const b = byId.get(Number(body.target_id));
+  if (!a || !b) return res.status(404).json({ error: '待判断的实体不存在' });
+  agentBusy = true;
+  try {
+    const judge = await recommend.aiJudgeRelation({ a, b, common_names: body.common_names });
+    res.json(judge);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  } finally {
+    agentBusy = false;
+  }
+});
 
 // ---------- 向量混合检索 ----------
 api.get('/embeddings/status', (req, res) => res.json(embeddings.status()));

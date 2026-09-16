@@ -589,9 +589,11 @@ function renderInfoCard() {
         <button onclick="focusEgo(${e.id})">以此为中心</button>
         <button onclick="askPath(${e.id}, '${escapeHtml(e.name).replace(/'/g, "\\'")}')">查路径</button>
         <button onclick="loadSimilar(${e.id})">相似实体</button>
+        <button onclick="loadEntityRecs(${e.id})">推荐关系</button>
         <button onclick="$('entity-img-input').click()">绑图片</button>
       </div>
       <div id="similar-box"></div>
+      <div id="rec-box"></div>
       <div class="btns"><button onclick="editEntity(${e.id})">编辑</button><button class="danger" onclick="delEntity(${e.id})">删除</button></div>`;
     card.style.display = 'block';
     if (imgCount > 0 && !imgs) loadEntityImages(e.id);
@@ -1083,6 +1085,95 @@ async function loadSimilar(id) {
   } catch (e) { box.innerHTML = `<div class="kv" style="color:#e0a768">${escapeHtml(e.message)}</div>`; }
 }
 window.loadSimilar = loadSimilar;
+
+/* ================= 关系推荐（共同邻居 + AI判断） ================= */
+const judgeCache = new Map(); // 'a|b' -> judge结果（本会话内复用，避免重复调LLM）
+
+// 单条候选的展开渲染：AI判断按钮 → 判断结果 → 采纳入库
+function recRowHtml(rec, boxId) {
+  const key = `${rec.source_id}|${rec.target_id}`;
+  const id = `${boxId}-${key.replace(/\|/g, '_')}`;
+  return `<div class="kv" style="padding:6px 0;border-top:1px dashed #2a3a55" id="row-${id}">
+    <span style="cursor:pointer;color:#7fd1ff" onclick="focusEntity(${rec.source_id})">${escapeHtml(rec.source_name)}</span>
+    <b style="color:#c792ea"> ⇄? </b>
+    <span style="cursor:pointer;color:#7fd1ff" onclick="focusEntity(${rec.target_id})">${escapeHtml(rec.target_name)}</span>
+    <span style="color:#8fa3c0;font-size:11px">共同邻居${rec.common_count}：${escapeHtml((rec.common_names || []).join('、'))}　AA ${rec.score}</span>
+    <div style="margin-top:4px"><button class="ghost" onclick="aiJudgeRec(${rec.source_id},${rec.target_id},'${id}')">AI 判断</button></div>
+    <div id="jr-${id}"></div>
+  </div>`;
+}
+
+async function aiJudgeRec(sourceId, targetId, rowId) {
+  const box = $('jr-' + rowId);
+  if (!box) return;
+  const key = `${sourceId}|${targetId}`;
+  if (judgeCache.has(key)) { renderJudge(box, judgeCache.get(key), rowId); return; }
+  box.innerHTML = '<div class="kv" style="color:#8fa3c0">AI 判断中…（约10-30秒）</div>';
+  try {
+    const j = await api('/api/recommend/ai', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_id: sourceId, target_id: targetId }) });
+    judgeCache.set(key, j);
+    renderJudge(box, j, rowId);
+  } catch (e) { box.innerHTML = `<div class="kv" style="color:#e0a768">判断失败：${escapeHtml(e.message)}</div>`; }
+}
+window.aiJudgeRec = aiJudgeRec;
+
+function renderJudge(box, j, rowId) {
+  if (!j.has_relation) { box.innerHTML = '<div class="kv" style="color:#8b949e">AI 判断：无明显关系可录</div>'; return; }
+  const confColor = { '确证': '#7ee787', '推测': '#e0a768', '存疑': '#8b949e' }[j.confidence] || '#8fa3c0';
+  box.innerHTML = `<div class="kv" style="background:#1a2332;border-radius:6px;padding:6px">
+    建议关系：<b style="color:#7ee787">${escapeHtml(j.name)}</b>
+    <span class="tag" style="color:${confColor};border-color:${confColor}55">${j.category}·${j.confidence}</span>
+    <div style="color:#8fa3c0;font-size:11px">依据：${escapeHtml(j.evidence || '（无）')}</div>
+    <div style="margin-top:4px"><button class="primary" onclick="acceptRec(${j.source_id},${j.target_id},'${rowId}')">采纳入库</button></div>
+  </div>`;
+}
+window.acceptRec = acceptRec;
+
+async function acceptRec(sourceId, targetId, rowId) {
+  const judge = judgeCache.get(`${sourceId}|${targetId}`);
+  if (!judge || !judge.has_relation) { toast('判断结果已失效，请重新AI判断', true); return; }
+  try {
+    await api('/api/relations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+      source_id: sourceId, target_id: targetId, name: judge.name, category: judge.category, confidence: judge.confidence,
+      source_ref: 'AI推荐: ' + (judge.evidence || '共同邻居推荐'),
+    }) });
+    toast(`已录入关系「${judge.name}」`);
+    const row = $('row-' + rowId);
+    if (row) row.remove();
+  } catch (e) { toast(e.message, true); }
+}
+
+function renderRecList(recs, boxId, emptyText) {
+  const box = $(boxId);
+  if (!box) return;
+  box.innerHTML = recs.length
+    ? recs.map((r) => recRowHtml(r, boxId)).join('')
+    : `<div class="kv">${emptyText}</div>`;
+}
+
+async function scanRecs() {
+  const btn = $('rc-scan');
+  btn.disabled = true;
+  $('rc-status').textContent = '扫描中…';
+  try {
+    const r = await api('/api/recommend?limit=20');
+    $('rc-status').textContent = `${r.recommendations.length} 条候选`;
+    renderRecList(r.recommendations, 'rc-list', '无可推荐候选（共同邻居≥2且无直接边的实体对）');
+  } catch (e) { $('rc-status').textContent = e.message; }
+  btn.disabled = false;
+}
+$('rc-scan').addEventListener('click', scanRecs);
+
+async function loadEntityRecs(id) {
+  const box = $('rec-box');
+  if (!box) return;
+  box.innerHTML = '<div class="kv">候选关系计算中…</div>';
+  try {
+    const r = await api(`/api/recommend?center=${id}&limit=10`);
+    renderRecList(r.recommendations, 'rec-box', '暂无候选（该实体2跳内无共同邻居≥1的无边实体对）');
+  } catch (e) { box.innerHTML = `<div class="kv" style="color:#e0a768">${escapeHtml(e.message)}</div>`; }
+}
+window.loadEntityRecs = loadEntityRecs;
 
 async function delRelation(id) {
   if (!confirm(`删除关系 #${id}？其绑定的图片文件将一并移除。`)) return;

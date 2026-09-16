@@ -118,6 +118,11 @@
           <div id="s-results"></div>
         </div>
         <div class="card">
+          <h3>关系推荐（共同邻居 + AI 判断）</h3>
+          <div class="row"><button class="primary" id="rc-scan">扫描全图推荐</button><span id="rc-status" style="font-size:11px;color:#8fa3c0;align-self:center"></span></div>
+          <div id="rc-list"></div>
+        </div>
+        <div class="card">
           <h3>关系查询（迷你Cypher，只读）</h3>
           <textarea id="c-query" placeholder="MATCH (a)-[r:互动]->(b) WHERE a.name contains 郑和 RETURN a.name, r.name, b.name LIMIT 10"></textarea>
           <div class="row"><button class="primary" id="c-run">执行</button><span id="c-hint" style="font-size:11px;color:#8fa3c0;align-self:center">支持 contains / = 与 类型:互动|归属</span></div>
@@ -250,6 +255,7 @@
           <ul class="hp-list">
             <li><b>AI 对话建图</b>：右侧输入自然语言（如"联网查一下珠穆朗玛峰的海拔并建入图谱"），或上传文档（md/txt/pdf/docx）批量抽取</li>
             <li><b>检索页签</b>：智能提问（一句话找关系）、语义/关键词混合检索；语义配置卡可填 Base URL/Key/模型并一键测试连接</li>
+            <li><b>关系推荐</b>：共同邻居找"该连没连"的实体对（检索页签"关系推荐"卡 / 实体卡"推荐关系"按钮），AI 判断后一键采纳入库</li>
             <li><b>最短路径</b>：搜索或列表选中实体后，用"路径"功能查两实体关联链路</li>
             <li><b>撤销</b>：按钮或 Ctrl+Z，可连续撤销；删除实体仅恢复实体本身，关联关系可在日志页看到级联记录</li>
             <li><b>推理</b>：开关叠加虚线显示的隐性关系（传递/对称/逆规则），点击可见推导依据</li>

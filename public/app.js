@@ -319,10 +319,10 @@ function updateRelLine(l) {
   }
   posAttr.needsUpdate = true;
   if (l.dashed) l.line.computeLineDistances();
-  // 标签置于弧顶（t=0.5）外移一点，跟随弧线弯曲
+  // 标签置于弧顶（t=0.5），贴合弧线
   if (l.label) {
     arcPoint(_arcTmp, l.a.pos, l.b.pos, _arcDir, _arcOff, 0.5);
-    l.label.position.copy(_arcTmp).addScaledVector(_arcOff, 6);
+    l.label.position.copy(_arcTmp);
   }
 }
 
@@ -331,8 +331,7 @@ function setRelLabelPos(lbl, pa, pb, arc) {
   if (!arc) { lbl.position.copy(pa).add(pb).multiplyScalar(0.5); return; }
   const dir = pb.clone().sub(pa);
   const off = arcOffsetVec(dir, arc);
-  const p = arcPoint(new THREE.Vector3(), pa, pb, dir, off, 0.5);
-  lbl.position.copy(p).addScaledVector(off, 6);
+  lbl.position.copy(arcPoint(new THREE.Vector3(), pa, pb, dir, off, 0.5));
 }
 
 function buildNodeMesh(category) {

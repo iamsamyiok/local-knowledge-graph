@@ -12,9 +12,10 @@
     height: 50px; display: flex; align-items: center; gap: 10px; padding: 0 14px;
     background: #101728; border-bottom: 1px solid #1e2a44; flex-shrink: 0;
   }
-  header h1 { font-size: 15px; font-weight: 600; color: #7fd1ff; letter-spacing: 1px; }
+  header h1 { font-size: 15px; font-weight: 600; color: #7fd1ff; letter-spacing: 1px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   header .spacer { flex: 1; }
   header .badge { font-size: 11px; color: #8fa3c0; border: 1px solid #2a3a5c; border-radius: 10px; padding: 2px 9px; }
+  header button, header .badge { flex-shrink: 0; }
   header .badge.ok { color: #7ee787; border-color: #2ea04366; }
   header .badge.off { color: #f0883e; border-color: #f0883e66; }
 
@@ -277,13 +278,15 @@
     /* 主题设置移动端可达：按钮保留，面板收窄为屏幕内浮层 */
     #style-panel { max-width: calc(100vw - 16px); width: 288px; top: 8px; right: 8px; }
 
-    /* 隐藏大标题，所有功能按钮单行排布，最大化画布显示范围 */
+    /* 隐藏大标题，所有功能按钮单行排布，最大化画布显示范围；
+       按钮过多时允许横向滑动兜底（360px以下窄屏），滚动条隐藏 */
     header {
-      flex-wrap: nowrap; height: 44px; padding: 0 6px; gap: 4px;
-      overflow: hidden;
+      flex-wrap: nowrap; height: 44px; padding: 0 6px; gap: 3px;
+      overflow-x: auto; overflow-y: hidden; scrollbar-width: none;
     }
+    header::-webkit-scrollbar { display: none; }
     header h1 { display: none; }
-    header button { padding: 5px 7px; font-size: 11px; flex-shrink: 0; min-width: 0; }
+    header button { padding: 5px 6px; font-size: 11px; flex-shrink: 0; min-width: 0; }
     #btn-export { display: none; } /* 导出RDF移入文件菜单 */
     #stat-badge, #agent-badge { display: none; }
 

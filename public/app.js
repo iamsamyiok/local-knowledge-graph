@@ -121,19 +121,24 @@ let UI_THEME = 'dark';
 try { if (localStorage.getItem(UI_THEME_KEY) === 'light') UI_THEME = 'light'; } catch (_) {}
 document.documentElement.dataset.theme = UI_THEME;
 
-function applyTheme(mode) {
+function applyUiTheme(mode) {
   UI_THEME = UI_THEMES[mode] ? mode : 'dark';
   document.documentElement.dataset.theme = UI_THEME;
   try { localStorage.setItem(UI_THEME_KEY, UI_THEME); } catch (_) {}
   if (typeof scene !== 'undefined' && typeof grid !== 'undefined' && grid) {
     const t = UI_THEMES[UI_THEME];
     scene.remove(grid);
-    grid.dispose();
+    if (typeof grid.dispose === 'function') grid.dispose(); // three r128 GridHelper 无 dispose
     grid = new THREE.GridHelper(480, 48, t.grid1, t.grid2);
     grid.position.y = -60;
     scene.add(grid);
   }
 }
+
+/* 启动期兜底：任何未捕获异常立刻弹出提示，避免画布空白却无感知 */
+window.addEventListener('error', (e) => {
+  try { toast('脚本异常: ' + (e.message || '未知错误'), 6000); } catch (_) {}
+});
 
 /* ================= Three.js 场景 ================= */
 const wrap = $('canvas-wrap');
@@ -156,7 +161,10 @@ scene.add(dirLight);
 let grid = new THREE.GridHelper(480, 48, 0x1c2a47, 0x141e35);
 grid.position.y = -60;
 scene.add(grid);
-applyTheme(UI_THEME); // 按存储的主题重建网格（CSS背景经 data-theme 生效）
+applyUiTheme(UI_THEME); // 按存储的主题重建网格（CSS背景经 data-theme 生效）
+
+const savedTheme = loadTheme();
+if (savedTheme && applyTheme(savedTheme)) { /* 启动时恢复用户保存的3D样式主题 */ }
 
 let nodeGroup = new THREE.Group();
 let linkGroup = new THREE.Group();
@@ -1334,9 +1342,11 @@ function renderStylePanel() {
   $('style-close').addEventListener('click', () => $('style-panel').classList.remove('show'));
   const themeSel = $('ui-theme-select');
   themeSel.value = UI_THEME;
-  themeSel.addEventListener('change', () => { applyTheme(themeSel.value); toast(themeSel.value === 'light' ? '已切换浅色主题' : '已切换深色主题'); });
+  themeSel.addEventListener('change', () => { applyUiTheme(themeSel.value); toast(themeSel.value === 'light' ? '已切换浅色主题' : '已切换深色主题'); });
   $('style-save').addEventListener('click', () => {
-    localStorage.setItem(THEME_KEY, JSON.stringify(currentThemeJson()));
+    const t = currentThemeJson();
+    localStorage.setItem(THEME_KEY, JSON.stringify(t));
+    applyTheme(t);
     toast('主题已保存到本地');
   });
   $('style-reset').addEventListener('click', () => {

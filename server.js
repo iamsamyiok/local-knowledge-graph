@@ -10,6 +10,7 @@ const agent = require('./lib/agent');
 const V = require('./lib/validator');
 const inference = require('./lib/inference');
 const embeddings = require('./lib/embeddings');
+const askLib = require('./lib/ask');
 const importer = require('./lib/importer');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -49,29 +50,10 @@ api.delete('/entities/:id', (req, res) => {
   res.json(r);
 });
 
-// ---------- 实体键解析（id或精确名称，多候选409） ----------
-function resolveEntityKey(key) {
-  const trimmed = String(key || '').trim();
-  if (!trimmed) { const e = new Error('必须提供实体（id或名称）'); e.status = 400; throw e; }
-  if (/^\d+$/.test(trimmed)) {
-    const byId = db.getEntity(Number(trimmed));
-    if (byId) return byId.id;
-  }
-  const hits = db.listEntities().filter((e) => e.name === trimmed);
-  if (hits.length === 0) { const e = new Error(`实体"${trimmed}"不存在`); e.status = 404; throw e; }
-  if (hits.length > 1) {
-    const e = new Error(`实体名"${trimmed}"存在${hits.length}个候选，请改用id`);
-    e.status = 409;
-    e.candidates = hits.map((h) => ({ id: h.id, name: h.name, category: h.category }));
-    throw e;
-  }
-  return hits[0].id;
-}
-
 // ---------- 中心层级子图（ego） ----------
 api.get('/graph/ego', (req, res) => {
   let centerId;
-  try { centerId = resolveEntityKey(req.query.center); }
+  try { centerId = db.resolveKey(req.query.center); }
   catch (e) { return res.status(e.status || 500).json({ error: e.message, candidates: e.candidates }); }
   const raw = req.query.depth;
   let depth = null;
@@ -86,8 +68,8 @@ api.get('/graph/ego', (req, res) => {
 // ---------- 两实体最短路径 ----------
 api.get('/graph/path', (req, res) => {
   try {
-    const fromId = resolveEntityKey(req.query.from);
-    const toId = resolveEntityKey(req.query.to);
+    const fromId = db.resolveKey(req.query.from);
+    const toId = db.resolveKey(req.query.to);
     let maxHops = 6;
     if (req.query.max !== undefined && String(req.query.max).trim() !== '') {
       maxHops = Number(req.query.max);
@@ -101,6 +83,32 @@ api.get('/graph/path', (req, res) => {
 api.post('/undo', (req, res) => {
   try { res.json({ ok: true, ...db.undoLast('手工'), counts: db.counts(), version: db.getVersion() }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+// ---------- 智能检索（LLM编译检索计划，只读执行） ----------
+api.post('/ask', async (req, res) => {
+  if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答、导入或智能检索），请稍后再试' });
+  const question = (req.body || {}).question;
+  if (!question || !String(question).trim()) return res.status(400).json({ error: '问题不能为空' });
+  agentBusy = true;
+  try {
+    const s = embeddings.loadSettings();
+    const result = await askLib.ask(question, { synthesis: s.ask_synthesis !== false });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  } finally {
+    agentBusy = false;
+  }
+});
+
+api.get('/ask/settings', (req, res) => {
+  res.json({ synthesis: embeddings.loadSettings().ask_synthesis !== false });
+});
+
+api.put('/ask/settings', (req, res) => {
+  embeddings.saveSettings({ ask_synthesis: !!(req.body || {}).synthesis });
+  res.json({ ok: true, synthesis: embeddings.loadSettings().ask_synthesis !== false });
 });
 
 // ---------- 实体图片绑定 ----------

@@ -71,6 +71,17 @@
 
       <div class="tabbody" id="tab-search">
         <div class="card">
+          <h3>智能提问（自然语言关系查找）</h3>
+          <label>用一句话描述要找的关系</label>
+          <input id="a-question" placeholder="例如：郑和下西洋涉及哪些人物和事件">
+          <div class="row">
+            <button class="primary" id="a-submit">提问</button>
+            <label class="ck" style="display:flex;align-items:center;gap:4px;font-size:11px;color:#8fa3c0;cursor:pointer"><input type="checkbox" id="a-synth" checked>生成综述</label>
+            <span id="a-status" style="font-size:11px;color:#8fa3c0;align-self:center"></span>
+          </div>
+          <div id="a-result"></div>
+        </div>
+        <div class="card">
           <h3>语义检索配置（硅基流动默认）</h3>
           <div class="row">
             <div style="flex:1"><label>API Key</label><input id="s-key" type="password" placeholder="仅存本地 data/settings.json"></div>

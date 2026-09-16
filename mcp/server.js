@@ -99,6 +99,11 @@ const TOOLS = [
     },
   },
   {
+    name: 'kg_digest',
+    description: '图谱目录：实体大类、关系大类、高频关系名Top20（含数量）、样例实体、规模。回答关系类问题前先取此目录，可显著提升Cypher查询的准确性',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
     name: 'kg_export_rdf',
     description: '导出全部图谱为RDF Turtle文本',
     inputSchema: { type: 'object', properties: {} },
@@ -191,6 +196,10 @@ const HANDLERS = {
     const byId = new Map(g.entities.map((e) => [e.id, e]));
     return { count: result.length, inferred: result.map((i) => ({ ...i, source: byId.get(i.source_id)?.name, target: byId.get(i.target_id)?.name })) };
   },
+  kg_digest: async () => {
+    const { digest, stats } = require('./lib/ask').buildDigest();
+    return { digest, ...stats };
+  },
   kg_export_rdf: async () => ({ turtle: rdf.exportTurtle(db.getGraph()) }),
   kg_apply_ops: async (args) => {
     if (READONLY) throw new Error('MCP运行于只读模式（KG_MCP_READONLY=1），写入被拒绝');
@@ -217,7 +226,7 @@ async function handle(req) {
       result: {
         protocolVersion: '2024-11-05',
         capabilities: { tools: {} },
-        serverInfo: { name: 'local-knowledge-graph', version: '1.0.0' },
+        serverInfo: { name: 'local-knowledge-graph', version: '1.3.0' },
       },
     });
   }

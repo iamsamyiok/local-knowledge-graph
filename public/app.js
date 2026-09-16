@@ -1445,6 +1445,69 @@ function initPolling() {
 }
 
 /* ================= 检索页签 ================= */
+// 智能提问：LLM编译检索计划→只读执行→关联发现→综述
+$('a-submit').addEventListener('click', askSubmit);
+$('a-question').addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); askSubmit(); } });
+
+async function askSubmit() {
+  const q = $('a-question').value.trim();
+  if (!q) return toast('请输入问题', true);
+  const btn = $('a-submit');
+  btn.disabled = true;
+  $('a-status').textContent = '智能检索中…（编译与执行）';
+  try {
+    const r = await api('/api/ask', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ question: q }) });
+    renderAskResult(r);
+    $('a-status').textContent = `完成（编译${(r.timings.compile_ms / 1000).toFixed(1)}s / 执行${r.timings.execute_ms}ms）`;
+  } catch (e) {
+    toast(e.message, true);
+    $('a-status').textContent = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderAskResult(r) {
+  const box = $('a-result');
+  const chips = r.steps.map((s) => {
+    const icon = s.status === 'ok' ? '✔' : s.status === 'timeout' ? '⏱' : '✘';
+    const label = s.tool + (s.note ? `（${s.note}）` : '') + (s.error ? `（${s.error}）` : '');
+    return `<span class="ask-chip ${s.status}">${icon} ${escapeHtml(label)}</span>`;
+  }).join('');
+  if (r.degraded) chips += '<span class="ask-chip degraded">智能编译失败，已降级关键词</span>';
+
+  const ents = r.entities.map((e) => `
+    <div class="list-item" style="cursor:pointer" onclick="focusEntity(${e.id})">
+      <b>${escapeHtml(e.name)}</b>
+      <span class="tag" style="color:${ENTITY_STYLE[e.category].css};border-color:${ENTITY_STYLE[e.category].css}55">${e.category}</span>
+    </div>`).join('') || '<div class="kv">无匹配实体</div>';
+
+  let cn = '';
+  if (r.co_neighbors.length) {
+    const nameOf = (id) => { const e = r.entities.find((x) => x.id === id); return e ? escapeHtml(e.name) : '#' + id; };
+    cn += `<div class="ask-sec">关联发现</div>` + r.co_neighbors.map((p) =>
+      `<div class="kv">↔ ${nameOf(p.a)} 与 ${nameOf(p.b)}：${p.shared.length} 个公共邻居</div>`).join('');
+  }
+  if (r.bridges.length) {
+    cn += r.bridges.map((b) => `<div class="kv">⬡ 桥接节点 <span style="color:#7fd1ff;cursor:pointer" onclick="focusEntity(${b.id})">${escapeHtml(b.name)}</span>（连接结果内 ${b.links} 个实体）</div>`).join('');
+  }
+
+  let synth = '';
+  if (r.synthesis) synth = `<div class="ask-synth">${renderSynthesis(r.synthesis, r.entities)}</div>`;
+  else if (r.synth_error) synth = `<div class="kv" style="color:#e0a768">综述生成失败：${escapeHtml(r.synth_error)}</div>`;
+
+  box.innerHTML = `<div class="ask-steps">${chips}</div>${synth}<div class="ask-sec">实体（${r.entities.length}）</div>${ents}${cn}`;
+}
+
+// 综述文本中的「名称#id」渲染为可点击引用
+function renderSynthesis(text, entities) {
+  const ids = new Set(entities.map((e) => e.id));
+  return escapeHtml(text).replace(/「([^「」]+)#(\d+)」/g, (m, name, id) => {
+    if (!ids.has(Number(id))) return m;
+    return `<span class="syn-ref" onclick="focusEntity(${id})">${name}</span>`;
+  });
+}
+
 async function loadSearchStatus() {
   try {
     const [st, cfg] = await Promise.all([api('/api/embeddings/status'), api('/api/embeddings/settings')]);
@@ -1464,6 +1527,12 @@ function renderSearchResults(r) {
       <div class="kv">语义 ${x.semantic_score ?? '—'}　关键词 ${x.keyword_score ?? '—'}　RRF ${x.rrf_score}　关联 ${x.hit_relations} 条</div>
     </div>`).join('');
 }
+
+// 智能提问设置：启动时读综述开关，变更即保存
+api('/api/ask/settings').then((s) => { $('a-synth').checked = !!s.synthesis; }).catch(() => {});
+$('a-synth').addEventListener('change', () => {
+  api('/api/ask/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ synthesis: $('a-synth').checked }) }).catch(() => {});
+});
 
 $('s-save').addEventListener('click', async () => {
   const patch = { model: $('s-model').value.trim() || 'BAAI/bge-m3' };

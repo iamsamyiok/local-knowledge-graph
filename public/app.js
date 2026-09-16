@@ -1333,7 +1333,7 @@ function renderStylePanel() {
 $('btn-style').addEventListener('click', () => {
   const p = $('style-panel');
   const opening = !p.classList.contains('show');
-  if (opening) { $('info-card').style.display = 'none'; renderStylePanel(); mountSettingsUpd(); }
+  if (opening) { $('info-card').style.display = 'none'; renderStylePanel(); }
   p.classList.toggle('show');
 });
 
@@ -1354,17 +1354,6 @@ function updBoxHTML() {
 function wireUpdBox(root) {
   root.querySelector('.js-upd-check').addEventListener('click', doUpdateCheck);
   root.querySelector('.js-upd-apply').addEventListener('click', doUpdateApply);
-}
-
-function mountSettingsUpd() {
-  const p = $('style-panel');
-  if (!p.querySelector('.upd-box')) {
-    const div = document.createElement('div');
-    div.innerHTML = '<h3 style="margin-top:14px">版本与更新</h3>' + updBoxHTML();
-    p.appendChild(div);
-    wireUpdBox(div);
-  }
-  renderUpdState();
 }
 
 function mountHelpPanel() {

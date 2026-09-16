@@ -298,7 +298,7 @@ function makeRelLine(pa, pb, arc, color, dashed, opacity, dashSize, gapSize) {
   return line;
 }
 
-// 每帧根据节点最新位置刷新弧线几何
+// 每帧根据节点最新位置刷新弧线几何（标签为HTML层，弧顶点存 l.arcTop 供屏幕投影）
 const _arcDir = new THREE.Vector3(), _arcOff = new THREE.Vector3(), _arcTmp = new THREE.Vector3();
 function updateRelLine(l) {
   if (!l.arc) {
@@ -307,7 +307,7 @@ function updateRelLine(l) {
     posAttr.setXYZ(1, l.b.pos.x, l.b.pos.y, l.b.pos.z);
     posAttr.needsUpdate = true;
     if (l.dashed) l.line.computeLineDistances();
-    l.label.position.copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
+    l.arcTop = (l.arcTop || new THREE.Vector3()).copy(l.a.pos).add(l.b.pos).multiplyScalar(0.5);
     return;
   }
   _arcDir.subVectors(l.b.pos, l.a.pos);
@@ -319,18 +319,73 @@ function updateRelLine(l) {
   }
   posAttr.needsUpdate = true;
   if (l.dashed) l.line.computeLineDistances();
-  // 标签置于弧顶（t=0.5）外移一点，跟随弧线弯曲
   arcPoint(_arcTmp, l.a.pos, l.b.pos, _arcDir, _arcOff, 0.5);
-  const lift = _arcOff.clone().multiplyScalar(6);
-  l.label.position.copy(_arcTmp).add(lift);
+  l.arcTop = (l.arcTop || new THREE.Vector3()).copy(_arcTmp);
 }
 
-function setRelLabelPos(lbl, pa, pb, arc) {
-  if (!arc) { lbl.position.copy(pa).add(pb).multiplyScalar(0.5); return; }
-  const dir = pb.clone().sub(pa);
-  const off = arcOffsetVec(dir, arc);
-  const p = arcPoint(new THREE.Vector3(), pa, pb, dir, off, 0.5);
-  lbl.position.copy(p).add(off.clone().multiplyScalar(6));
+/* ---- 关系标签：HTML层 + 屏幕空间防重叠 ---- */
+const relLabelEls = new Map(); // relationId -> div
+function rebuildLinkLabelEls() {
+  const layer = $('link-labels');
+  layer.innerHTML = '';
+  relLabelEls.clear();
+  for (const l of simLinks) {
+    const el = document.createElement('div');
+    el.className = 'rel-label';
+    const name = l.inferredName || (state.relations.find((x) => x.id === l.id) || {}).name || '';
+    el.textContent = name;
+    el.style.color = l.colorCss || '#ccc';
+    el.style.borderColor = (l.colorCss || '#ccc') + '55';
+    el.onclick = () => {
+      state.selected = { type: 'relation', id: l.id };
+      renderInfoCard();
+    };
+    layer.appendChild(el);
+    relLabelEls.set(l.id, el);
+    l.labelEl = el;
+  }
+  measureLinkLabels();
+}
+
+// 一次性测量标签尺寸（投影定位需要 w/h；避免每帧读 offsetWidth 强制回流）
+function measureLinkLabels() {
+  for (const el of relLabelEls.values()) {
+    el._w = el.offsetWidth;
+    el._h = el.offsetHeight;
+  }
+}
+window.addEventListener('resize', () => setTimeout(measureLinkLabels, 60));
+
+const _projV = new THREE.Vector3();
+function updateLinkLabels() {
+  const layer = $('link-labels');
+  if (!layer || !simLinks.length) return;
+  const W = renderer.domElement.clientWidth, H = renderer.domElement.clientHeight;
+  const items = [];
+  for (const l of simLinks) {
+    const el = l.labelEl;
+    if (!el) continue;
+    _projV.copy(l.arcTop || l.a.pos).project(camera);
+    if (_projV.z > 1 || _projV.z < -1) { el.style.display = 'none'; continue; }
+    const x = (_projV.x + 1) / 2 * W, y = (1 - _projV.y) / 2 * H;
+    if (x < -80 || x > W + 80 || y < -40 || y > H + 40) { el.style.display = 'none'; continue; }
+    el.style.display = 'block';
+    items.push({ el, x, y, w: el._w || 40, h: el._h || 18 });
+  }
+  // 屏幕空间防重叠：按 y 排序，与已放置矩形相交的标签向下推开，直到无碰撞
+  items.sort((p, q) => p.y - q.y);
+  const placed = [];
+  for (const it of items) {
+    let ny = it.y, guard = 0;
+    while (guard++ < 60) {
+      const hit = placed.find((p) => Math.abs(ny - p.y) < (it.h + p.h) / 2 + 2 && Math.abs(it.x - p.x) < (it.w + p.w) / 2 + 4);
+      if (!hit) break;
+      ny = hit.y + (hit.h + it.h) / 2 + 2;
+    }
+    it.y = ny;
+    placed.push(it);
+    it.el.style.transform = `translate(${(it.x - it.w / 2).toFixed(1)}px, ${(it.y - it.h / 2).toFixed(1)}px)`;
+  }
 }
 
 function buildNodeMesh(category) {
@@ -444,11 +499,7 @@ function rebuildGraph() {
     line.userData.relationId = r.id;
     line.userData.baseOpacity = op;
     linkGroup.add(line);
-    const lbl = makeLabelSprite(r.name, st.css, 24);
-    lbl.userData.text = r.name;
-    setRelLabelPos(lbl, a.pos, b.pos, arc);
-    labelGroup.add(lbl);
-    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed, confidence: conf, arc });
+    simLinks.push({ id: r.id, a, b, line, dashed, confidence: conf, arc, colorCss: st.css });
   });
 
   // 推理关系叠加：虚化虚线 + "(推)"标注，负数id与库中显式关系区分；仅显示两端均在当前视图的边
@@ -467,12 +518,10 @@ function rebuildGraph() {
       const line = makeRelLine(a.pos, b.pos, arc, 0xc792ea, true, 0.35, 3, 5);
       line.userData.relationId = -(idx + 1);
       linkGroup.add(line);
-      const lbl = makeLabelSprite(ir.name + '(推)', '#c792ea', 22);
-      setRelLabelPos(lbl, a.pos, b.pos, arc);
-      labelGroup.add(lbl);
-      simLinks.push({ id: line.userData.relationId, a, b, line, label: lbl, dashed: true, arc });
+      simLinks.push({ id: line.userData.relationId, a, b, line, dashed: true, arc, colorCss: '#c792ea', inferredName: ir.name + '(推)' });
     });
   }
+  rebuildLinkLabelEls();
 
   simBudget = 420;
   settleCount = 0;
@@ -550,6 +599,7 @@ function animate() {
     if (camFly.t >= 1) camFly = null;
   }
   controls.update();
+  updateLinkLabels();
   renderer.render(scene, camera);
 }
 animate();
@@ -1523,7 +1573,7 @@ function applyCanvasHi(nodes, rels) {
     const base = l.line.userData.baseOpacity === undefined ? 0.9 : l.line.userData.baseOpacity;
     const on = rels.has(l.id);
     l.line.material.opacity = on ? Math.max(base, 0.95) : 0.05;
-    if (l.label) l.label.material.opacity = on ? 1 : 0.06;
+    if (l.labelEl) l.labelEl.style.opacity = on ? 1 : 0.06;
   }
 }
 
@@ -1536,7 +1586,7 @@ function clearCanvasHi() {
   }
   for (const l of simLinks) {
     l.line.material.opacity = l.line.userData.baseOpacity === undefined ? 0.9 : l.line.userData.baseOpacity;
-    if (l.label) l.label.material.opacity = 1;
+    if (l.labelEl) l.labelEl.style.opacity = 1;
   }
 }
 
@@ -1829,8 +1879,11 @@ function applyStyleLight(dirty) {
         : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: op });
       if (st.dashed) l.line.computeLineDistances();
       l.dashed = st.dashed;
-      const fresh = relabel(l.label, st.css, 24);
-      if (fresh) l.label = fresh;
+      // 标签为HTML层：直接换色
+      if (l.labelEl) {
+        l.labelEl.style.color = st.css;
+        l.labelEl.style.borderColor = st.css + '55';
+      }
     }
   }
 }

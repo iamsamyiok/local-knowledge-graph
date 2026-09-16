@@ -111,6 +111,30 @@ function makeRingSprite(cssColor, isCenter) {
   return sprite;
 }
 
+/* ================= 界面主题（深色/浅色，独立于3D样式主题） ================= */
+const UI_THEME_KEY = 'kg_ui_theme_v1';
+const UI_THEMES = {
+  dark: { grid1: 0x1c2a47, grid2: 0x141e35 },
+  light: { grid1: 0xb7c6dd, grid2: 0xcdd9ea },
+};
+let UI_THEME = 'dark';
+try { if (localStorage.getItem(UI_THEME_KEY) === 'light') UI_THEME = 'light'; } catch (_) {}
+document.documentElement.dataset.theme = UI_THEME;
+
+function applyTheme(mode) {
+  UI_THEME = UI_THEMES[mode] ? mode : 'dark';
+  document.documentElement.dataset.theme = UI_THEME;
+  try { localStorage.setItem(UI_THEME_KEY, UI_THEME); } catch (_) {}
+  if (typeof scene !== 'undefined' && typeof grid !== 'undefined' && grid) {
+    const t = UI_THEMES[UI_THEME];
+    scene.remove(grid);
+    grid.dispose();
+    grid = new THREE.GridHelper(480, 48, t.grid1, t.grid2);
+    grid.position.y = -60;
+    scene.add(grid);
+  }
+}
+
 /* ================= Three.js 场景 ================= */
 const wrap = $('canvas-wrap');
 const scene = new THREE.Scene();
@@ -129,9 +153,10 @@ scene.add(new THREE.AmbientLight(0xffffff, 0.55));
 const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
 dirLight.position.set(120, 200, 100);
 scene.add(dirLight);
-const grid = new THREE.GridHelper(480, 48, 0x1c2a47, 0x141e35);
+let grid = new THREE.GridHelper(480, 48, 0x1c2a47, 0x141e35);
 grid.position.y = -60;
 scene.add(grid);
+applyTheme(UI_THEME); // 按存储的主题重建网格（CSS背景经 data-theme 生效）
 
 let nodeGroup = new THREE.Group();
 let linkGroup = new THREE.Group();
@@ -1292,6 +1317,13 @@ function renderStylePanel() {
     </div>`).join('');
   p.innerHTML = `
     <h4>视图设置<span id="style-close" title="关闭">x</span></h4>
+    <div class="style-sec">界面主题</div>
+    <div class="style-row"><span class="sname">配色</span>
+      <select id="ui-theme-select" style="flex:1">
+        <option value="dark">深色（默认）</option>
+        <option value="light">浅色</option>
+      </select>
+    </div>
     <div class="style-sec">实体 · 颜色 / 大小倍率</div>${entRows}
     <div class="style-sec">关系 · 颜色 / 虚线 / 段长 / 间隔 / 不透明度</div>${relRows}
     <div class="row">
@@ -1300,6 +1332,9 @@ function renderStylePanel() {
     </div>
     <div class="hint-text">修改即时生效并应用于3D画布与图例；「保存主题」写入浏览器本地存储。受WebGL限制线宽恒为1px，虚线可通过段长/间隔调节密度。</div>`;
   $('style-close').addEventListener('click', () => $('style-panel').classList.remove('show'));
+  const themeSel = $('ui-theme-select');
+  themeSel.value = UI_THEME;
+  themeSel.addEventListener('change', () => { applyTheme(themeSel.value); toast(themeSel.value === 'light' ? '已切换浅色主题' : '已切换深色主题'); });
   $('style-save').addEventListener('click', () => {
     localStorage.setItem(THEME_KEY, JSON.stringify(currentThemeJson()));
     toast('主题已保存到本地');

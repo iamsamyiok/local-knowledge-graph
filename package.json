@@ -1,6 +1,6 @@
 {
   "name": "local-knowledge-graph",
-  "version": "1.5.0",
+  "version": "1.6.0",
   "description": "本地知识图谱整合器：3D可视化 + AI对话建图 + 智能检索 + Git回溯 + RDF合规，全流程本地运行",
   "main": "server.js",
   "bin": {

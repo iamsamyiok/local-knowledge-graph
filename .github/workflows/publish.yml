@@ -1,0 +1,47 @@
+name: Publish
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: 版本一致性校验（tag 必须 = package.json 版本）
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          node -e "
+            const v = require('./package.json').version;
+            const t = process.env.REF_NAME.replace(/^v/, '');
+            if (v !== t) { console.error('tag v' + t + ' 与 package.json ' + v + ' 不一致'); process.exit(1); }
+            console.log('版本一致: v' + v);
+          "
+
+      - name: 安装依赖
+        run: npm install
+
+      - name: 测试
+        run: npm test
+
+      - name: 发布到 npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: 创建 GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: gh release create "$REF_NAME" --verify-tag --generate-notes --title "$REF_NAME"

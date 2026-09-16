@@ -42,7 +42,9 @@ const mcpHandler = createMcpHandler({
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
 app.use(express.json({ limit: '30mb' }));
-app.use(express.static(path.join(__dirname, 'public')));
+app.use(express.static(path.join(__dirname, 'public'), {
+  setHeaders: (res) => { res.setHeader('Cache-Control', 'no-cache, must-revalidate'); }
+}));
 app.use('/uploads', express.static(path.join(git.DATA_DIR, 'uploads')));
 
 const api = express.Router();

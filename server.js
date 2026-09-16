@@ -49,21 +49,30 @@ api.delete('/entities/:id', (req, res) => {
   res.json(r);
 });
 
+// ---------- 实体键解析（id或精确名称，多候选409） ----------
+function resolveEntityKey(key) {
+  const trimmed = String(key || '').trim();
+  if (!trimmed) { const e = new Error('必须提供实体（id或名称）'); e.status = 400; throw e; }
+  if (/^\d+$/.test(trimmed)) {
+    const byId = db.getEntity(Number(trimmed));
+    if (byId) return byId.id;
+  }
+  const hits = db.listEntities().filter((e) => e.name === trimmed);
+  if (hits.length === 0) { const e = new Error(`实体"${trimmed}"不存在`); e.status = 404; throw e; }
+  if (hits.length > 1) {
+    const e = new Error(`实体名"${trimmed}"存在${hits.length}个候选，请改用id`);
+    e.status = 409;
+    e.candidates = hits.map((h) => ({ id: h.id, name: h.name, category: h.category }));
+    throw e;
+  }
+  return hits[0].id;
+}
+
 // ---------- 中心层级子图（ego） ----------
 api.get('/graph/ego', (req, res) => {
-  const centerKey = String(req.query.center || '').trim();
-  if (!centerKey) return res.status(400).json({ error: '必须提供中心实体（center=id或名称）' });
-  let centerId = null;
-  if (/^\d+$/.test(centerKey)) {
-    const byId = db.getEntity(Number(centerKey));
-    if (byId) centerId = byId.id;
-  }
-  if (centerId === null) {
-    const hits = db.listEntities().filter((e) => e.name === centerKey);
-    if (hits.length === 0) return res.status(404).json({ error: `实体"${centerKey}"不存在` });
-    if (hits.length > 1) return res.status(409).json({ error: `实体名"${centerKey}"存在${hits.length}个候选，请改用id`, candidates: hits.map((h) => ({ id: h.id, name: h.name, category: h.category })) });
-    centerId = hits[0].id;
-  }
+  let centerId;
+  try { centerId = resolveEntityKey(req.query.center); }
+  catch (e) { return res.status(e.status || 500).json({ error: e.message, candidates: e.candidates }); }
   const raw = req.query.depth;
   let depth = null;
   if (raw !== undefined && String(raw).trim() !== '') {
@@ -72,6 +81,26 @@ api.get('/graph/ego', (req, res) => {
     if (depth === 0) depth = null; // 0 = 全部层级
   }
   res.json(db.egoSubgraph(centerId, depth));
+});
+
+// ---------- 两实体最短路径 ----------
+api.get('/graph/path', (req, res) => {
+  try {
+    const fromId = resolveEntityKey(req.query.from);
+    const toId = resolveEntityKey(req.query.to);
+    let maxHops = 6;
+    if (req.query.max !== undefined && String(req.query.max).trim() !== '') {
+      maxHops = Number(req.query.max);
+      if (!Number.isInteger(maxHops) || maxHops < 1 || maxHops > 12) return res.status(400).json({ error: 'max必须为1-12的整数' });
+    }
+    res.json(db.findPath(fromId, toId, maxHops));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, candidates: e.candidates }); }
+});
+
+// ---------- 撤销最近操作（快照逆向写入） ----------
+api.post('/undo', (req, res) => {
+  try { res.json({ ok: true, ...db.undoLast('手工'), counts: db.counts(), version: db.getVersion() }); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ---------- 实体图片绑定 ----------

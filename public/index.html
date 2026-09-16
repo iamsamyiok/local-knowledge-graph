@@ -17,6 +17,7 @@
     <button id="m-left" class="m-btn" title="打开图谱面板">图谱</button>
     <button id="m-right" class="m-btn" title="打开AI对话">AI</button>
     <button id="btn-savepoint" title="将当前合规数据提交为Git保存点（仅存差异）">打保存点</button>
+    <button id="btn-undo" title="撤销最近一次操作（按快照还原，快捷键Ctrl+Z）">撤销</button>
     <button id="btn-export" title="导出标准RDF(Turtle)格式文件">导出RDF</button>
     <button id="btn-relayout" title="重新进行力导向布局">重新布局</button>
     <button id="btn-resetview" title="重置相机视角">重置视角</button>
@@ -95,6 +96,20 @@
       <div class="tabbody" id="tab-log">
         <div class="card">
           <h3>操作日志（手工与OpenCode共用）</h3>
+          <div class="log-filter">
+            <select id="log-type">
+              <option value="">全部类型</option>
+              <option value="ADD_ENTITY">新增实体</option>
+              <option value="UPDATE_ENTITY">更新实体</option>
+              <option value="DELETE_ENTITY">删除实体</option>
+              <option value="ADD_RELATION">新增关系</option>
+              <option value="UPDATE_RELATION">更新关系</option>
+              <option value="DELETE_RELATION">删除关系</option>
+              <option value="RESTORE">版本回溯</option>
+              <option value="UNDO">撤销</option>
+            </select>
+            <input id="log-kw" placeholder="筛选关键字（名称/来源）">
+          </div>
           <div id="log-list"></div>
         </div>
       </div>
@@ -124,6 +139,11 @@
       <div id="info-card"></div>
       <div id="style-panel"></div>
       <div id="empty-hint" style="display:none">暂无数据<br>在左侧添加实体，或在右侧让 OpenCode 联网补全</div>
+      <div id="tooltip3d" style="display:none"></div>
+      <div id="path-panel" style="display:none">
+        <div class="p-head"><span id="path-title">最短路径</span><span id="path-close" title="关闭">×</span></div>
+        <div id="path-body"></div>
+      </div>
     </div>
 
     <div class="panel right" id="panel-right">

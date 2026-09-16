@@ -176,6 +176,81 @@ test('rdf/viewer: 导出包含实体与转义', () => {
   assert.ok(html.includes('THREE'), 'three.js应被内联');
 });
 
+/* ---------- 最短路径 ---------- */
+test('findPath: 链式/不连通/层数上限', () => {
+  const all = db.listEntities();
+  const A = all.find((e) => e.name === 'infA'), C = all.find((e) => e.name === 'infC'), D = all.find((e) => e.name === 'egoD'), egoA = all.find((e) => e.name === 'egoA');
+  const direct = db.findPath(A.id, C.id, 6); // infA-师从->infC 直连
+  assert.ok(direct.found && direct.hops === 1);
+  // egoD-位于->egoC-位于(反向)->egoB-位于(反向)->egoA：3跳无向路径
+  const chain = db.findPath(D.id, egoA.id, 6);
+  assert.ok(chain.found && chain.hops === 3);
+  assert.equal(chain.entities.length, 4);
+  assert.equal(chain.relations.length, 3);
+  // 链上相邻实体首尾衔接
+  for (let i = 0; i < chain.relations.length; i++) {
+    const s = chain.relations[i].source_id, t = chain.relations[i].target_id;
+    const pair = [chain.entities[i].id, chain.entities[i + 1].id];
+    assert.ok((s === pair[0] && t === pair[1]) || (s === pair[1] && t === pair[0]));
+  }
+  // 层数上限拦截
+  assert.equal(db.findPath(D.id, egoA.id, 2).found, false);
+  // 孤立实体不连通
+  const iso1 = db.addEntity({ name: 'isoX1', category: '抽象实体' }, '手工');
+  const iso2 = db.addEntity({ name: 'isoY1', category: '抽象实体' }, '手工');
+  assert.equal(db.findPath(iso1.id, iso2.id, 6).found, false);
+});
+
+/* ---------- 撤销最近操作 ---------- */
+test('undoLast: 各类型逆向还原与连续撤销', () => {
+  const e1 = db.addEntity({ name: 'undoA', category: '抽象实体', attributes: { 键: '值' } }, '手工');
+  const e2 = db.addEntity({ name: 'undoB', category: '抽象实体' }, '手工');
+
+  // 撤销 ADD_RELATION → 关系消失
+  const rel = db.addRelation({ source_id: e1.id, target_id: e2.id, name: '位于', category: '空间' }, '手工');
+  let r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'ADD_RELATION');
+  assert.equal(db.getRelation(rel.id), undefined);
+
+  // 连续撤销：撤销 DELETE_RELATION → 恢复原id（先重建一条并删除）
+  const rel2 = db.addRelation({ source_id: e1.id, target_id: e2.id, name: '位于', category: '空间' }, '手工');
+  db.deleteRelation(rel2.id, '手工');
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'DELETE_RELATION');
+  assert.ok(db.getRelation(rel2.id), '关系应以原id恢复');
+
+  // 撤销 UPDATE_ENTITY → 字段还原
+  db.updateEntity(e1.id, { name: 'undoA改' }, '手工');
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'UPDATE_ENTITY');
+  assert.equal(db.getEntity(e1.id).name, 'undoA');
+
+  // 撤销 DELETE_ENTITY → 实体原id恢复 + 级联遗失提示
+  const delInfo = db.deleteEntity(e2.id, '手工');
+  assert.ok(delInfo.cascaded_relations >= 1);
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'DELETE_ENTITY');
+  assert.ok(db.getEntity(e2.id), '实体应以原id恢复');
+  assert.ok(r.caveats.length >= 1, '应提示级联关系需回溯恢复');
+
+  // 顺序撤销沿历史逆放：恢复级联关系 → 撤销其原始新增 → 撤销undoB/undoA的新增
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'DELETE_RELATION');
+  assert.ok(db.getRelation(rel2.id), '级联删除的关系应先被恢复');
+
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'ADD_RELATION');
+  assert.equal(db.getRelation(rel2.id), undefined);
+
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'ADD_ENTITY');
+  assert.equal(db.getEntity(e2.id), undefined);
+
+  r = db.undoLast('手工');
+  assert.equal(r.undone.op_type, 'ADD_ENTITY');
+  assert.equal(db.getEntity(e1.id), undefined);
+});
+
 /* ---------- 向量独立库 ---------- */
 test('vectors: 独立于主库读写与孤儿清理', () => {
   const vectors = require('../lib/vectors');

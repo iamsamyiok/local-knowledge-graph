@@ -434,6 +434,38 @@ renderer.domElement.addEventListener('pointerup', (e) => {
   renderInfoCard();
 });
 
+/* ================= 节点悬浮提示 ================= */
+const tooltipEl = $('tooltip3d');
+let hoverPending = null;
+renderer.domElement.addEventListener('pointermove', (e) => {
+  if (e.pointerType === 'touch') { tooltipEl.style.display = 'none'; return; }
+  hoverPending = { x: e.clientX, y: e.clientY };
+});
+setInterval(() => {
+  if (!hoverPending) return;
+  const { x, y } = hoverPending;
+  hoverPending = null;
+  const rect = renderer.domElement.getBoundingClientRect();
+  if (x < rect.left || x > rect.right || y < rect.top || y > rect.bottom) { tooltipEl.style.display = 'none'; return; }
+  const mouse = new THREE.Vector2(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
+  raycaster.setFromCamera(mouse, camera);
+  const hits = raycaster.intersectObjects(nodeGroup.children, false);
+  if (!hits.length) { tooltipEl.style.display = 'none'; renderer.domElement.style.cursor = ''; return; }
+  const m = state.entityMap.get(hits[0].object.userData.entityId);
+  if (!m) { tooltipEl.style.display = 'none'; return; }
+  let attrs = '';
+  try {
+    const a = typeof m.entity.attributes === 'string' ? JSON.parse(m.entity.attributes || '{}') : (m.entity.attributes || {});
+    const k = Object.keys(a)[0];
+    if (k) attrs = `<div class="tt-attr">${escapeHtml(k)}: ${escapeHtml(String(a[k]).slice(0, 40))}</div>`;
+  } catch (_) { /* 属性非JSON时省略 */ }
+  tooltipEl.innerHTML = `<b>${escapeHtml(m.entity.name)}</b><span class="tt-cat">${escapeHtml(m.entity.category)}</span>${attrs}`;
+  tooltipEl.style.display = 'block';
+  tooltipEl.style.left = Math.min(x + 14, window.innerWidth - 170) + 'px';
+  tooltipEl.style.top = (y + 14) + 'px';
+  renderer.domElement.style.cursor = 'pointer';
+}, 60);
+
 function renderInfoCard() {
   const card = $('info-card');
   if (!state.selected) { card.style.display = 'none'; return; }
@@ -465,6 +497,7 @@ function renderInfoCard() {
       ${imgHtml}
       <div class="btns">
         <button onclick="focusEgo(${e.id})">以此为中心</button>
+        <button onclick="askPath(${e.id}, '${escapeHtml(e.name).replace(/'/g, "\\'")}')">查路径</button>
         <button onclick="$('entity-img-input').click()">绑图片</button>
       </div>
       <div class="btns"><button onclick="editEntity(${e.id})">编辑</button><button class="danger" onclick="delEntity(${e.id})">删除</button></div>`;
@@ -931,17 +964,34 @@ function formatLog(l) {
   }
 }
 
-async function loadLogs() {
-  try {
-    const logs = await api('/api/logs?limit=200');
-    $('log-list').innerHTML = logs.map((l) => `
+let logsCache = [];
+function renderLogs() {
+  const type = $('log-type').value;
+  const kw = $('log-kw').value.trim().toLowerCase();
+  const shown = logsCache.filter((l) => {
+    if (type && l.op_type !== type) return false;
+    if (kw) {
+      const hay = (formatLog(l) + ' ' + l.source + ' ' + (OP_LABELS[l.op_type] || l.op_type)).toLowerCase();
+      if (!hay.includes(kw)) return false;
+    }
+    return true;
+  });
+  $('log-list').innerHTML = shown.map((l) => `
       <div class="log-item">
         <div class="l1"><span>#${l.id} ${OP_LABELS[l.op_type] || escapeHtml(l.op_type)}</span><span>${escapeHtml(l.source)}</span></div>
         <div class="l1"><span style="color:#54617f">${l.created_at}</span></div>
         <div class="l2">${escapeHtml(formatLog(l))}</div>
-      </div>`).join('') || '<div class="sub" style="color:#5c6f92">暂无日志</div>';
+      </div>`).join('') || `<div class="sub" style="color:#5c6f92">${logsCache.length ? '无匹配日志' : '暂无日志'}</div>`;
+}
+
+async function loadLogs() {
+  try {
+    logsCache = await api('/api/logs?limit=200');
+    renderLogs();
   } catch (e) { toast(e.message, true); }
 }
+$('log-type').addEventListener('change', renderLogs);
+$('log-kw').addEventListener('input', renderLogs);
 
 async function loadHistory() {
   try {
@@ -978,6 +1028,94 @@ async function doSavepoint(message) {
     loadHistory();
   } catch (e) { toast(e.message, true); }
 }
+
+/* ================= 撤销最近操作（快照逆向还原） ================= */
+async function doUndo() {
+  try {
+    const r = await api('/api/undo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+    let msg = r.summary || '已撤销';
+    if (r.caveats && r.caveats.length) msg += '（' + r.caveats.join('；') + '）';
+    toast(msg);
+    state.selected = null;
+    renderInfoCard();
+    await refreshAll();
+    loadLogs();
+    loadHistory();
+  } catch (e) { toast(e.message, true); }
+}
+$('btn-undo').addEventListener('click', doUndo);
+
+/* ================= 键盘快捷键 ================= */
+// Esc逐层关闭浮层 → 清除选中 → 退出中心模式；Delete删除选中；Ctrl+Z撤销；Ctrl+F跳转检索
+function isTypingContext() {
+  const el = document.activeElement;
+  if (!el) return false;
+  const tag = el.tagName;
+  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
+}
+
+document.addEventListener('keydown', (e) => {
+  const mod = e.ctrlKey || e.metaKey;
+  if (mod && (e.key === 'z' || e.key === 'Z')) {
+    if (isTypingContext()) return;
+    e.preventDefault();
+    doUndo();
+    return;
+  }
+  if (mod && (e.key === 'f' || e.key === 'F')) {
+    e.preventDefault();
+    document.querySelector('[data-tab="search"]').click();
+    $('s-query').focus();
+    return;
+  }
+  if (isTypingContext()) return;
+  if (e.key === 'Escape') {
+    if ($('style-panel').classList.contains('show')) { $('style-panel').classList.remove('show'); return; }
+    if ($('file-menu').classList.contains('show')) { $('file-menu').classList.remove('show'); return; }
+    if (state.selected) { state.selected = null; renderInfoCard(); return; }
+    if (state.ego) exitEgo();
+    return;
+  }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && state.selected) {
+    e.preventDefault();
+    if (state.selected.type === 'entity') delEntity(state.selected.id);
+    else delRelation(state.selected.id);
+  }
+});
+
+/* ================= 最短路径查询 ================= */
+function renderPathPanel(r) {
+  const panel = $('path-panel');
+  if (!r.found) {
+    $('path-body').innerHTML = '<div class="kv">两实体间在6层内无连通路径</div>';
+    panel.style.display = 'block';
+    return;
+  }
+  const rows = [];
+  r.entities.forEach((ent, i) => {
+    if (i > 0) {
+      const rel = r.relations[i - 1];
+      const dir = rel.source_id === r.entities[i - 1].id ? '→' : '←';
+      rows.push(`<div class="p-rel">—${dir} ${escapeHtml(rel.name)} ${dir === '→' ? '→' : '—'}—</div>`);
+    }
+    rows.push(`<div class="p-ent" onclick="focusEntity(${ent.id}); document.getElementById('path-panel').style.display='none'">${escapeHtml(ent.name)}<span class="tag">${escapeHtml(ent.category)}</span></div>`);
+  });
+  $('path-title').textContent = `最短路径（${r.hops} 跳）`;
+  $('path-body').innerHTML = rows.join('');
+  panel.style.display = 'block';
+}
+async function askPath(fromId, fromName) {
+  const to = prompt(`查询「${fromName}」到哪位实体的最短路径？（输入名称或id，最多6层）`, '');
+  if (to === null) return;
+  const key = to.trim();
+  if (!key) return;
+  try {
+    const r = await api(`/api/graph/path?from=${fromId}&to=${encodeURIComponent(key)}`);
+    renderPathPanel(r);
+  } catch (e) { toast(e.message, true); }
+}
+window.askPath = askPath;
+$('path-close').addEventListener('click', () => { $('path-panel').style.display = 'none'; });
 
 /* ================= OpenCode 对话 ================= */
 function appendMsg(role, text, chips, chipWarn) {

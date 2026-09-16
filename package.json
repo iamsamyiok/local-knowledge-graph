@@ -1,6 +1,6 @@
 {
   "name": "local-kg-integrator",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "description": "本地知识图谱信息整合器：3D可视化 + 双操作模式 + Git回溯 + RDF合规",
   "main": "server.js",
   "engines": {

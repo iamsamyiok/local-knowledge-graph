@@ -65,6 +65,16 @@ kg
 - **OpenCode（AI 对话建图 / 智能提问编译）**：使用 opencode CLI 自身的认证（`opencode auth login`），应用不经手密钥。未安装或未认证时仅这两个功能降级。
 - 更换数据目录（`kg --data <目录>`）会使用该目录下的独立配置，互不串扰。
 
+## MCP 外部接入（外部 Agent 读写图谱）
+
+在 **MCP 页签** 开启"MCP 服务"后，外部 Agent（Claude Desktop、Cursor、Cline、opencode 等）即可通过标准 MCP 协议对本图谱做完整增删改查：
+
+- **HTTP 方式（推荐，支持远程 Agent）**：端点 `http://<主机>:3000/mcp`（Streamable HTTP，JSON 响应），启用后自动生成访问令牌，支持 `Authorization: Bearer` 头或 `?token=` 参数；界面提供三类客户端配置片段一键复制
+- **本机 stdio 方式（免令牌）**：客户端配置命令 `npx -y local-knowledge-graph --mcp`（或 `kg --mcp`）；数据目录默认 `~/.local-knowledge-graph`，可用 `KG_DATA_DIR` 环境变量指定
+- **工具集（12 个）**：查询类 kg_stats / kg_list_entities / kg_get_entity / kg_get_graph / kg_ego / kg_search / kg_cypher / kg_inference / kg_path / kg_digest / kg_export_rdf；写入类 kg_apply_ops（add/update/delete entity 与 relation，自动记操作日志 + Git 保存点）
+- **只读模式**：勾选后外部仅可查询；**令牌管理**：一键重新生成即刻吊销旧令牌
+- **实时同步**：图谱被任一写入方（页面、API、MCP、外部进程）修改后，网页 3 秒内自动刷新
+
 ## 功能速览
 
 - **AI 对话建图**：右侧输入自然语言指令（联网补全），或上传文档（md/txt/pdf/docx）批量抽取三元组
@@ -105,6 +115,7 @@ kg
 
 ## 版本历史摘要
 
+- **v1.8.0**：MCP 外部接入——设置新增 MCP 页签（服务开关/只读模式/令牌管理/三类客户端一键复制配置）；`/mcp` Streamable HTTP 端点（令牌鉴权+CORS，12 个工具含完整 CRUD）；`kg --mcp` 本机 stdio 接入；图谱变更实时同步（SSE 推送+跨进程探测，页面 3 秒内自动刷新）
 - **v1.7.0**：六项图谱能力升级——①实体别名（增删/全局唯一/搜索与消歧联动）②同名冲突检测（创建即提示，可合并可强制）③多路径查找（2-6跳，图上高亮，MCP kg_path）④相似实体推荐（语义+结构双模式）⑤关系置信度三档（确证/推测/存疑，样式区分可过滤）与来源引用标注 ⑥智能问答附证据路径链 ⑦文档批量入图（md/txt/pdf→LLM抽取→审核勾选→来源标记入库，支持跳过审核）
 - **v1.6.1**：修复浅色主题切换导致画布空白的问题；标题栏按钮防挤压（窄屏可横滑）；修复3D样式主题刷新后不恢复的问题；新增脚本异常提示
 - **v1.6.0**：界面主题新增浅色配色（视图设置一键切换，本地记忆）；GitHub 仓库与 npm 包通过 Actions 自动同步（打 tag 即测试+发布+Release）

@@ -504,3 +504,12 @@ html[data-theme="light"] .alias-chip { color: #2c3e57; border-color: #c9d6e8; }
 html[data-theme="light"] .alias-chip i { color: #c44f27; }
 html[data-theme="light"] .p-path { border-top-color: #dfe7f2; }
 html[data-theme="light"] .p-head2 { color: #1a5dc8; }
+
+/* MCP 设置片段 */
+.mcp-snippet {
+  flex: 1; margin: 0; padding: 8px 10px; font-size: 10.5px; line-height: 1.5;
+  background: #0d1526; color: #9fb6d9; border: 1px solid #24324d; border-radius: 8px;
+  white-space: pre-wrap; word-break: break-all; max-height: 110px; overflow: auto;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+html[data-theme="light"] .mcp-snippet { background: #f4f7fc; color: #33445e; border-color: #d8e2f0; }

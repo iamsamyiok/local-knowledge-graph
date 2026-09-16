@@ -33,6 +33,7 @@
         <div data-tab="entity" class="active">实体</div>
         <div data-tab="relation">关系</div>
         <div data-tab="search">检索</div>
+        <div data-tab="mcp">MCP</div>
         <div data-tab="log">日志</div>
         <div data-tab="version">版本</div>
       </div>
@@ -164,6 +165,60 @@
           <div class="hint-text">数据文件 data/kg.db 由本地Git仓库托管，仅存差异版本；恢复前会自动备份当前状态。</div>
         </div>
         <div class="card"><h3>提交历史（与操作日志双向绑定）</h3><div id="v-list"></div></div>
+      </div>
+
+      <div class="tabbody" id="tab-mcp">
+        <div class="card">
+          <h3>MCP 服务（外部 Agent 接入）</h3>
+          <div class="row" style="gap:16px;flex-wrap:wrap">
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="mcp-toggle" style="width:auto"> 启用 MCP 服务
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;cursor:pointer">
+              <input type="checkbox" id="mcp-readonly" style="width:auto"> 只读模式（禁用外部写入）
+            </label>
+          </div>
+          <div id="mcp-cfg" style="display:none">
+            <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px">
+              <span style="font-size:12px;color:#8fa3c0">端点</span>
+              <code id="mcp-endpoint" style="font-size:11px;word-break:break-all"></code>
+            </div>
+            <div class="row" style="align-items:center;gap:8px;flex-wrap:wrap">
+              <span style="font-size:12px;color:#8fa3c0">令牌</span>
+              <code id="mcp-token" style="font-size:11px;word-break:break-all"></code>
+              <button id="mcp-copy-token" title="复制令牌">复制</button>
+              <button id="mcp-regen" title="重新生成后旧令牌立即失效">重新生成</button>
+            </div>
+            <div class="hint-text">外部 Agent 凭令牌访问。令牌泄露时点击"重新生成"即刻吊销旧令牌。</div>
+
+            <h3 style="margin-top:14px">客户端一键配置</h3>
+            <label>通用 Streamable HTTP（Cline / opencode / 通用 MCP 客户端）</label>
+            <div class="row" style="align-items:flex-start;gap:8px">
+              <pre id="mcp-snippet-http" class="mcp-snippet"></pre>
+              <button id="mcp-copy-http">复制</button>
+            </div>
+            <label>Claude Desktop / Cursor（claude_desktop_config.json / mcp.json）</label>
+            <div class="row" style="align-items:flex-start;gap:8px">
+              <pre id="mcp-snippet-desktop" class="mcp-snippet"></pre>
+              <button id="mcp-copy-desktop">复制</button>
+            </div>
+            <label>本机 stdio（与网页同机时，免令牌）</label>
+            <div class="row" style="align-items:flex-start;gap:8px">
+              <pre id="mcp-snippet-stdio" class="mcp-snippet"></pre>
+              <button id="mcp-copy-stdio">复制</button>
+            </div>
+            <div class="hint-text">stdio 方式命令：npx -y local-knowledge-graph --mcp（数据目录默认 ~/.local-knowledge-graph，可用环境变量 KG_DATA_DIR 指定其他目录）。远程 Agent 请使用 HTTP 方式并保管好令牌。</div>
+          </div>
+          <div id="mcp-status" class="hint-text"></div>
+        </div>
+        <div class="card">
+          <h3>外部 Agent 可用的工具（12 个）</h3>
+          <div class="hint-text">
+            查询：kg_stats / kg_list_entities / kg_get_entity / kg_get_graph / kg_ego / kg_search / kg_cypher / kg_inference / kg_path / kg_digest / kg_export_rdf<br>
+            写入：kg_apply_ops（add_entity / add_relation / update_entity / update_relation / delete_entity / delete_relation，自动记操作日志+Git保存点）<br>
+            实时同步：任一写入方修改图谱后，页面会在 3 秒内自动刷新。
+          </div>
+        </div>
       </div>
     </div>
 

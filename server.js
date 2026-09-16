@@ -2,6 +2,7 @@
 
 const path = require('path');
 const fs = require('fs');
+const crypto = require('crypto');
 const express = require('express');
 const db = require('./lib/db');
 const git = require('./lib/git');
@@ -13,6 +14,30 @@ const embeddings = require('./lib/embeddings');
 const askLib = require('./lib/ask');
 const updater = require('./lib/updater');
 const importer = require('./lib/importer');
+const bus = require('./lib/bus');
+const { createMcpHandler } = require('./mcp/http');
+
+// ---------- 图谱变更总线：db 写函数统一包装，任一写入即时广播 ----------
+for (const fn of ['addEntity', 'updateEntity', 'deleteEntity', 'addRelation', 'updateRelation', 'deleteRelation', 'addAlias', 'removeAlias', 'deleteEntityImage', 'applyAgentOps', 'undoLast', 'logRestore']) {
+  const orig = db[fn];
+  if (typeof orig === 'function') {
+    db[fn] = function (...args) {
+      const r = orig.apply(this, args);
+      bus.emit('graph-changed', { via: fn });
+      return r;
+    };
+  }
+}
+
+function mcpServerVersion() {
+  try { return require('./package.json').version || '1.0.0'; } catch (_) { return '1.0.0'; }
+}
+const mcpHandler = createMcpHandler({
+  isEnabled: () => embeddings.loadSettings().mcp_enabled === true,
+  getToken: () => embeddings.loadSettings().mcp_token || '',
+  isReadonly: () => embeddings.loadSettings().mcp_readonly === true,
+  serverVersion: mcpServerVersion(),
+});
 
 const PORT = Number(process.env.PORT || 3000);
 const app = express();
@@ -445,6 +470,55 @@ api.post('/git/restore', (req, res) => {
   res.json(r);
 });
 
+// ---------- MCP 外部接入设置 ----------
+api.get('/mcp/settings', (req, res) => {
+  const s = embeddings.loadSettings();
+  res.json({
+    enabled: s.mcp_enabled === true,
+    readonly: s.mcp_readonly === true,
+    token: s.mcp_token || '',
+    endpoint: `/mcp`,
+    version: mcpServerVersion(),
+  });
+});
+
+api.put('/mcp/settings', (req, res) => {
+  try {
+    const patch = {};
+    const b = req.body || {};
+    if (typeof b.enabled === 'boolean') patch.mcp_enabled = b.enabled;
+    if (typeof b.readonly === 'boolean') patch.mcp_readonly = b.readonly;
+    const cur = embeddings.loadSettings();
+    if (patch.mcp_enabled === true && !cur.mcp_token) patch.mcp_token = crypto.randomBytes(24).toString('hex');
+    const s = embeddings.saveSettings(patch);
+    res.json({ enabled: s.mcp_enabled === true, readonly: s.mcp_readonly === true, token: s.mcp_token || '', endpoint: `/mcp`, version: mcpServerVersion() });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+api.post('/mcp/token/regen', (req, res) => {
+  const token = crypto.randomBytes(24).toString('hex');
+  embeddings.saveSettings({ mcp_token: token });
+  res.json({ token });
+});
+
+// ---------- 实时同步：SSE 事件流 ----------
+api.get('/events', (req, res) => {
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+  res.write('retry: 3000\n\n');
+  const send = (type, payload) => {
+    try { res.write(`event: ${type}\ndata: ${JSON.stringify(payload || {})}\n\n`); } catch (_) { /* 连接已断 */ }
+  };
+  send('hello', { ts: Date.now() });
+  const unsub = bus.on((type, payload) => send(type, payload));
+  const heartbeat = setInterval(() => { try { res.write(': ping\n\n'); } catch (_) { /* 忽略 */ } }, 25000);
+  req.on('close', () => { clearInterval(heartbeat); unsub(); });
+});
+
 // ---------- OpenCode自然语言指令 ----------
 // AI任务互斥：OpenCode进程最长5分钟，防止并发请求叠加进程互抢SQLite与内存
 let agentBusy = false;
@@ -611,6 +685,9 @@ api.post('/agent/doc', async (req, res) => {
   } finally { agentBusy = false; }
 });
 
+// MCP 端点（置于 /api 之前；内部有开关与令牌校验）
+app.use('/mcp', mcpHandler);
+
 app.use('/api', api);
 
 // 统一错误处理
@@ -717,3 +794,15 @@ function scheduleRestart() {
     }
   });
 })(0);
+
+// ---------- 跨进程变更探测：外部进程（stdio MCP/CLI）写库时兜底广播 ----------
+let lastSignature = '';
+function detectExternalChange() {
+  try {
+    const sig = JSON.stringify([db.counts(), db.maxLogId()]);
+    if (lastSignature && sig !== lastSignature) bus.emit('graph-changed', { via: 'external' });
+    lastSignature = sig;
+  } catch (_) { /* 数据库短暂不可用时跳过本轮 */ }
+}
+setInterval(detectExternalChange, 3000).unref();
+

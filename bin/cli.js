@@ -23,6 +23,7 @@ if (args.includes('-h') || args.includes('--help')) {
   --port <n>      服务端口（默认 3000，环境变量 PORT 同效）
   --host <addr>   监听地址（默认 127.0.0.1，局域网访问用 0.0.0.0，环境变量 KG_HOST 同效）
   --data <dir>    数据目录（默认 ~/.local-knowledge-graph，环境变量 KG_DATA_DIR 同效）
+  --mcp           以 MCP stdio 服务运行（供 Claude Desktop/Cursor 等客户端接入，不启动网页）
   --no-open       启动后不自动打开浏览器
   -v, --version   显示版本
   -h, --help      显示本帮助
@@ -35,6 +36,13 @@ if (args.includes('-v') || args.includes('--version')) {
   console.log(require('../package.json').version);
   process.exit(0);
 }
+
+if (args.includes('--mcp')) {
+  // stdio MCP：数据目录仍由 KG_DATA_DIR / --data 决定
+  const d = argValue('--data');
+  if (d) process.env.KG_DATA_DIR = d;
+  require('../mcp/server.js');
+} else {
 
 const { ensureLegacyMigration, isDevRepo } = require('../lib/paths');
 
@@ -83,4 +91,5 @@ require('../server.js');
 // 开发仓库模式提示数据位置（npm模式由 server bootstrap 迁移逻辑打印）
 if (isDevRepo()) {
   console.log('[开发模式] 检测到Git仓库，数据目录使用项目内 ./data');
+}
 }

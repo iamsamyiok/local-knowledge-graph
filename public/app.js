@@ -30,6 +30,21 @@ function confBadge(r) {
 }
 
 const $ = (id) => document.getElementById(id);
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制到剪贴板');
+  } catch (_) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.select();
+    try { document.execCommand('copy'); toast('已复制到剪贴板'); } catch (e) { toast('复制失败，请手动选择复制', true); }
+    ta.remove();
+  }
+}
 function toast(msg, isErr) {
   const t = $('toast');
   t.textContent = msg;
@@ -2025,6 +2040,74 @@ api('/api/ask/settings').then((s) => { $('a-synth').checked = !!s.synthesis; }).
 $('a-synth').addEventListener('change', () => {
   api('/api/ask/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ synthesis: $('a-synth').checked }) }).catch(() => {});
 });
+
+/* ================= MCP 外部接入 ================= */
+let mcpState = { enabled: false, readonly: false, token: '', endpoint: '/mcp' };
+
+function mcpSnippets() {
+  const origin = location.origin;
+  const http = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url: `${origin}/mcp?token=${mcpState.token}` } } }, null, 2);
+  const desktop = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url: `${origin}/mcp`, headers: { Authorization: `Bearer ${mcpState.token}` } } } }, null, 2);
+  const stdio = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { command: 'npx', args: ['-y', 'local-knowledge-graph', '--mcp'] } } }, null, 2);
+  $('mcp-snippet-http').textContent = http;
+  $('mcp-snippet-desktop').textContent = desktop;
+  $('mcp-snippet-stdio').textContent = stdio;
+  $('mcp-endpoint').textContent = `${origin}${mcpState.endpoint}`;
+  $('mcp-token').textContent = mcpState.token;
+}
+
+function renderMcp() {
+  $('mcp-toggle').checked = mcpState.enabled;
+  $('mcp-readonly').checked = mcpState.readonly;
+  $('mcp-cfg').style.display = mcpState.enabled ? '' : 'none';
+  $('mcp-status').textContent = mcpState.enabled
+    ? (mcpState.readonly ? '状态：已启用（只读）— 外部 Agent 仅可查询' : '状态：已启用（读写）— 外部 Agent 可查询与写入')
+    : '状态：已停用 — /mcp 端点关闭';
+  if (mcpState.enabled) mcpSnippets();
+}
+
+async function loadMcp() {
+  try {
+    mcpState = await api('/api/mcp/settings');
+    renderMcp();
+  } catch (_) { /* 服务未就绪时静默 */ }
+}
+
+async function saveMcp(patch) {
+  try {
+    mcpState = await api('/api/mcp/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    renderMcp();
+  } catch (e) { toast(e.message, true); }
+}
+
+$('mcp-toggle').addEventListener('change', () => saveMcp({ enabled: $('mcp-toggle').checked }));
+$('mcp-readonly').addEventListener('change', () => saveMcp({ readonly: $('mcp-readonly').checked }));
+$('mcp-regen').addEventListener('click', async () => {
+  try {
+    const r = await api('/api/mcp/token/regen', { method: 'POST' });
+    mcpState.token = r.token;
+    renderMcp();
+    toast('令牌已重新生成，旧令牌立即失效');
+  } catch (e) { toast(e.message, true); }
+});
+$('mcp-copy-token').addEventListener('click', () => copyText(mcpState.token));
+$('mcp-copy-http').addEventListener('click', () => copyText($('mcp-snippet-http').textContent));
+$('mcp-copy-desktop').addEventListener('click', () => copyText($('mcp-snippet-desktop').textContent));
+$('mcp-copy-stdio').addEventListener('click', () => copyText($('mcp-snippet-stdio').textContent));
+loadMcp();
+
+/* ================= 实时同步：SSE + 外部变更提示 ================= */
+let syncTimer = null;
+let lastSyncToast = 0;
+try {
+  const es = new EventSource('/api/events');
+  es.addEventListener('graph-changed', () => {
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(() => { refreshAll().catch(() => {}); }, 800);
+    const now = Date.now();
+    if (now - lastSyncToast > 60000) { lastSyncToast = now; toast('图谱已被外部更新，已自动同步'); }
+  });
+} catch (_) { /* 浏览器不支持时依赖手动刷新 */ }
 
 $('s-save').addEventListener('click', async () => {
   const patch = { model: $('s-model').value.trim() || 'BAAI/bge-m3' };

@@ -13,7 +13,19 @@ const state = {
   imageCounts: new Map(),  // entityId -> 图片数量
   entityImages: new Map(), // entityId -> [图片行]
   meta: null,              // /api/meta 缓存（图例与下拉框用）
+  aliases: {},             // entityId -> [别名]（/api/graph 附带）
+  confFilter: '',          // 关系置信度过滤：''=全部 | 确证 | 推测 | 存疑
+  pathHi: null,            // 画布路径高亮 { nodes:Set, rels:Set }
+  lastAsk: null,           // 最近一次智能提问响应（证据路径高亮用）
 };
+
+// 置信度三档的展示色
+const CONF_STYLE = { '确证': '#7ee787', '推测': '#e0a768', '存疑': '#8b949e' };
+function confBadge(r) {
+  const c = r.confidence || '确证';
+  const tip = r.source_ref ? ` title="来源：${escapeHtml(r.source_ref)}"` : '';
+  return `<span class="conf-badge" style="color:${CONF_STYLE[c]};border-color:${CONF_STYLE[c]}66"${tip}>${c}</span>`;
+}
 
 const $ = (id) => document.getElementById(id);
 function toast(msg, isErr) {
@@ -256,7 +268,9 @@ function rebuildGraph() {
   // 中心层级模式：仅构建子图；全图模式：构建全部
   const sub = state.ego ? calcEgo(state.ego.centerId, state.ego.depth) : null;
   const ents = sub ? sub.entities : state.entities;
-  const rels = sub ? sub.relations : state.relations;
+  const allRels = sub ? sub.relations : state.relations;
+  const rels = allRels.filter((r) => !state.confFilter || (r.confidence || '确证') === state.confFilter);
+  state.pathHi = null;
 
   state.entityMap.clear();
   const N = ents.length;
@@ -311,13 +325,17 @@ function rebuildGraph() {
     const b = simNodes.find((n) => n.id === r.target_id);
     if (!a || !b) return;
     const st = RELATION_STYLE[r.category] || { color: 0x999999, dashed: false };
+    const conf = r.confidence || '确证';
+    const baseOp = st.opacity === undefined ? 0.9 : st.opacity;
+    const op = conf === '存疑' ? Math.min(baseOp, 0.35) : baseOp; // 存疑降不透明度
+    const dashed = st.dashed || conf === '推测';                  // 推测强制虚线
     const geo = new THREE.BufferGeometry().setFromPoints([a.pos, b.pos]);
-    const op = st.opacity === undefined ? 0.9 : st.opacity;
-    const mat = st.dashed
+    const mat = dashed
       ? new THREE.LineDashedMaterial({ color: st.color, dashSize: st.dashSize || 6, gapSize: st.gapSize || 4, transparent: true, opacity: op })
       : new THREE.LineBasicMaterial({ color: st.color, transparent: true, opacity: op });
     const line = new THREE.Line(geo, mat);
     line.userData.relationId = r.id;
+    line.userData.baseOpacity = op;
     linkGroup.add(line);
     const mid = a.pos.clone().add(b.pos).multiplyScalar(0.5);
     // 线标注显示具体关系名（如"父子"），线型/颜色仍由大类规定
@@ -325,7 +343,7 @@ function rebuildGraph() {
     lbl.userData.text = r.name;
     lbl.position.copy(mid);
     labelGroup.add(lbl);
-    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed: st.dashed });
+    simLinks.push({ id: r.id, a, b, line, label: lbl, dashed, confidence: conf });
   });
 
   // 推理关系叠加：虚化虚线 + "(推)"标注，负数id与库中显式关系区分；仅显示两端均在当前视图的边
@@ -520,19 +538,42 @@ function renderInfoCard() {
         (rows.length ? '' : '<span class="kv">加载中…</span>') + '</div></div>';
     }
     const levelHtml = m.level !== null && m.level !== undefined ? `<div class="kv">层级: <b style="color:${levelColor(m.level)}">L${m.level}</b>${m.level === 0 ? '（中心）' : ''}</div>` : '';
+    // 别名区
+    const als = state.aliases[e.id] || [];
+    const aliasHtml = `<div class="kv"><b>别名</b>：${als.length
+      ? als.map((a) => `<span class="alias-chip">${escapeHtml(a)}<i onclick="delAlias(${e.id},'${escapeHtml(a).replace(/'/g, "\\'")}')">×</i></span>`).join('')
+      : '（无）'} <input id="alias-new" placeholder="加别名" style="width:88px"><button class="ghost" onclick="addAlias(${e.id})">添</button></div>`;
+    // 同名实体互链
+    const twins = state.entities.filter((x) => x.name === e.name && x.id !== e.id);
+    const twinHtml = twins.length ? `<div class="kv">同名实体：${twins.map((t) => `<span style="color:#7fd1ff;cursor:pointer" onclick="focusEntity(${t.id})">#${t.id}</span>`).join('、')}</div>` : '';
+    // 关系预览（带置信度）
+    const myRels = relsInScope.filter((r) => r.source_id === e.id || r.target_id === e.id).slice(0, 12);
+    const relNameOf = (id) => { const mm = state.entityMap.get(id); return mm ? escapeHtml(mm.entity.name) : '#' + id; };
+    const relPreview = myRels.length
+      ? `<div class="kv" style="margin-top:4px"><b>关系明细</b></div>` + myRels.map((r) => {
+          const dir = r.source_id === e.id;
+          const other = dir ? r.target_id : r.source_id;
+          return `<div class="kv" style="padding-left:6px">${dir ? '' : relNameOf(other) + ' ←'}「${escapeHtml(r.name)}」${dir ? '→ ' + relNameOf(other) : ''} ${confBadge(r)}</div>`;
+        }).join('')
+      : '';
     card.innerHTML = `
       <h4>${escapeHtml(e.name)} <span class="tag" style="color:${ENTITY_STYLE[e.category].css};border-color:${ENTITY_STYLE[e.category].css}55">${e.category} · ${ENTITY_STYLE[e.category].shape}</span></h4>
       <div class="kv">id: ${e.id}　来源: ${e.source}</div>
       <div class="kv">创建: ${e.created_at}</div>
       ${levelHtml}
+      ${aliasHtml}
+      ${twinHtml}
       <div class="kv">关联关系: ${relCount} 条</div>
       ${attrHtml || '<div class="kv">（无属性）</div>'}
+      ${relPreview}
       ${imgHtml}
       <div class="btns">
         <button onclick="focusEgo(${e.id})">以此为中心</button>
         <button onclick="askPath(${e.id}, '${escapeHtml(e.name).replace(/'/g, "\\'")}')">查路径</button>
+        <button onclick="loadSimilar(${e.id})">相似实体</button>
         <button onclick="$('entity-img-input').click()">绑图片</button>
       </div>
+      <div id="similar-box"></div>
       <div class="btns"><button onclick="editEntity(${e.id})">编辑</button><button class="danger" onclick="delEntity(${e.id})">删除</button></div>`;
     card.style.display = 'block';
     if (imgCount > 0 && !imgs) loadEntityImages(e.id);
@@ -566,10 +607,15 @@ function renderInfoCard() {
     if (!r) { card.style.display = 'none'; return; }
     const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
     card.innerHTML = `
-      <h4>${escapeHtml(r.name)} <span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}关系</span></h4>
+      <h4>${escapeHtml(r.name)} <span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}关系</span> ${confBadge(r)}</h4>
       <div class="kv"><b>${s ? escapeHtml(s.entity.name) : '?'}</b> --&gt; <b>${t ? escapeHtml(t.entity.name) : '?'}</b></div>
       <div class="kv">id: ${r.id}　来源: ${r.source}</div>
-      <div class="btns"><button class="danger" onclick="delRelation(${r.id})">删除</button></div>`;
+      <div class="kv"><b>置信度</b>：
+        <select id="rel-conf" style="font-size:11px">
+          ${['确证', '推测', '存疑'].map((c) => `<option value="${c}"${(r.confidence || '确证') === c ? ' selected' : ''}>${c}</option>`).join('')}
+        </select></div>
+      <div class="kv"><b>来源引用</b>：<input id="rel-sref" value="${escapeHtml(r.source_ref || '')}" placeholder="URL/文献+页码" style="width:150px"></div>
+      <div class="btns"><button onclick="saveRelMeta(${r.id})">保存标注</button><button class="danger" onclick="delRelation(${r.id})">删除</button></div>`;
     card.style.display = 'block';
   }
 }
@@ -830,7 +876,9 @@ function renderLegend() {
   $('legend').innerHTML = '<b>实体样式</b><br>' +
     meta.entity_categories.map((c) => `<span class="sw" style="background:${ENTITY_STYLE[c].css}"></span>${c} · ${ENTITY_STYLE[c].shape}`).join('<br>') +
     '<br><b>关系线型</b><br>' +
-    meta.relation_categories.map((c) => `<span class="ln ${RELATION_STYLE[c].dashed ? 'dash' : ''}" style="border-color:${RELATION_STYLE[c].css}"></span>${c}关系`).join('<br>');
+    meta.relation_categories.map((c) => `<span class="ln ${RELATION_STYLE[c].dashed ? 'dash' : ''}" style="border-color:${RELATION_STYLE[c].css}"></span>${c}关系`).join('<br>') +
+    '<br><b>置信度</b><br>' +
+    ['确证', '推测', '存疑'].map((c) => `<span class="sw" style="background:${CONF_STYLE[c]}"></span>${c}${c === '推测' ? '（虚线）' : c === '存疑' ? '（淡化）' : ''}`).join('<br>');
 }
 
 function refreshEntityOptions() {
@@ -911,15 +959,71 @@ async function submitRelation() {
       target_id: Number($('r-target').value),
       name: $('r-name').value.trim(),
       category: $('r-category').value,
+      confidence: $('r-confidence').value,
+      source_ref: $('r-source-ref').value.trim(),
     };
     if (!body.name) return toast('请输入关系名称', true);
     if (!body.source_id || !body.target_id) return toast('请先创建实体', true);
     await api('/api/relations', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
     $('r-name').value = '';
+    $('r-source-ref').value = '';
     toast('关系已添加');
     await refreshAll();
   } catch (e) { toast(e.message, true); }
 }
+
+// 保存关系标注（置信度+来源引用）
+async function saveRelMeta(id) {
+  try {
+    await api(`/api/relations/${id}`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confidence: $('rel-conf').value, source_ref: $('rel-sref').value.trim() }),
+    });
+    toast('标注已保存');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+window.saveRelMeta = saveRelMeta;
+
+// 别名增删
+async function addAlias(entityId) {
+  const inp = $('alias-new');
+  const alias = inp ? inp.value.trim() : '';
+  if (!alias) return toast('请输入别名', true);
+  try {
+    await api('/api/aliases', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ entity_id: entityId, alias }) });
+    toast('别名已添加');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+window.addAlias = addAlias;
+
+async function delAlias(entityId, alias) {
+  try {
+    const records = await api('/api/aliases/records');
+    const hit = records.find((x) => x.entity_id === entityId && x.alias === alias);
+    if (!hit) throw new Error('别名不存在或已删除');
+    await api(`/api/aliases/${hit.id}`, { method: 'DELETE' });
+    toast('别名已删除');
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+window.delAlias = delAlias;
+
+// 相似实体推荐
+async function loadSimilar(id) {
+  const box = $('similar-box');
+  if (!box) return;
+  box.innerHTML = '<div class="kv">相似度计算中…</div>';
+  try {
+    const r = await api(`/api/similar/${id}`);
+    if (!r.results.length) { box.innerHTML = '<div class="kv">暂无相似实体（可先构建全量向量提升效果）</div>'; return; }
+    const nameOf = (e2) => { const mm = state.entityMap.get(e2.id); return mm ? escapeHtml(mm.entity.name) : '#' + e2.id; };
+    box.innerHTML = `<div class="kv"><b>相似实体</b> <span class="tag">${r.mode === 'semantic' ? '语义' : '结构'}</span></div>` +
+      r.results.map((x) => `<div class="kv" style="cursor:pointer;padding-left:6px" onclick="focusEntity(${x.entity.id})">${nameOf(x.entity)} <span style="color:#8fa3c0">${(x.score * 100).toFixed(1)}%</span></div>`).join('');
+  } catch (e) { box.innerHTML = `<div class="kv" style="color:#e0a768">${escapeHtml(e.message)}</div>`; }
+}
+window.loadSimilar = loadSimilar;
 
 async function delRelation(id) {
   if (!confirm(`删除关系 #${id}？`)) return;
@@ -948,18 +1052,29 @@ function renderEntityList() {
 }
 
 function renderRelationList() {
-  $('r-list').innerHTML = state.relations.map((r) => {
+  const shown = state.relations.filter((r) => !state.confFilter || (r.confidence || '确证') === state.confFilter);
+  $('r-list').innerHTML = shown.map((r) => {
     const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
     return `
     <div class="list-item">
       <div class="main">
-        <div class="name">${escapeHtml(r.name)}<span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}</span></div>
-        <div class="sub">#${r.id} · ${s ? escapeHtml(s.entity.name) : '?'} → ${t ? escapeHtml(t.entity.name) : '?'} · ${r.source}</div>
+        <div class="name">${escapeHtml(r.name)}<span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}</span>${confBadge(r)}</div>
+        <div class="sub">#${r.id} · ${s ? escapeHtml(s.entity.name) : '?'} → ${t ? escapeHtml(t.entity.name) : '?'} · ${r.source}${r.source_ref ? ' · ' + escapeHtml(r.source_ref) : ''}</div>
       </div>
       <button class="danger" onclick="delRelation(${r.id})">删</button>
     </div>`;
-  }).join('') || '<div class="sub" style="color:#5c6f92">暂无关系</div>';
+  }).join('') || '<div class="sub" style="color:#5c6f92">' + (state.confFilter ? `暂无「${state.confFilter}」关系` : '暂无关系') + '</div>';
 }
+
+// 置信度过滤条（事件委托）
+document.addEventListener('click', (e) => {
+  const chip = e.target.closest && e.target.closest('.cf-chip');
+  if (!chip) return;
+  state.confFilter = chip.dataset.c || '';
+  document.querySelectorAll('.cf-chip').forEach((x) => x.classList.toggle('active', x === chip));
+  renderRelationList();
+  rebuildGraph();
+});
 
 /* 日志人话渲染：op_type + snapshot JSON → 可读中文；已删实体名称回退#id */
 const OP_LABELS = {
@@ -1110,6 +1225,7 @@ document.addEventListener('keydown', (e) => {
     }
     if ($('style-panel').classList.contains('show')) { $('style-panel').classList.remove('show'); return; }
     if ($('file-menu').classList.contains('show')) { $('file-menu').classList.remove('show'); return; }
+    if (state.pathHi) { clearCanvasHi(); return; }
     if (state.selected) { state.selected = null; renderInfoCard(); return; }
     if (state.ego) exitEgo();
     return;
@@ -1121,39 +1237,94 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-/* ================= 最短路径查询 ================= */
+/* ================= 路径查询（多路径枚举）与画布高亮 ================= */
 function renderPathPanel(r) {
   const panel = $('path-panel');
-  if (!r.found) {
-    $('path-body').innerHTML = '<div class="kv">两实体间在6层内无连通路径</div>';
+  // 兼容旧单路径格式
+  if (!r.paths) {
+    if (!r.found) {
+      $('path-body').innerHTML = '<div class="kv">两实体间在6层内无连通路径</div>';
+      panel.style.display = 'block';
+      return;
+    }
+    r = { found: true, paths: [{ hops: r.hops, entities: r.entities, relations: r.relations }] };
+  }
+  if (!r.found || !r.paths.length) {
+    $('path-body').innerHTML = `<div class="kv">${escapeHtml(r.hint || '两实体间无连通路径')}</div>`;
     panel.style.display = 'block';
     return;
   }
-  const rows = [];
-  r.entities.forEach((ent, i) => {
-    if (i > 0) {
-      const rel = r.relations[i - 1];
-      const dir = rel.source_id === r.entities[i - 1].id ? '→' : '←';
-      rows.push(`<div class="p-rel">—${dir} ${escapeHtml(rel.name)} ${dir === '→' ? '→' : '—'}—</div>`);
-    }
-    rows.push(`<div class="p-ent" onclick="focusEntity(${ent.id}); document.getElementById('path-panel').style.display='none'">${escapeHtml(ent.name)}<span class="tag">${escapeHtml(ent.category)}</span></div>`);
+  const nameOf = (ent) => escapeHtml(ent ? ent.name : '#' + ent);
+  let html = '';
+  r.paths.forEach((p, pi) => {
+    const rows = [];
+    p.entities.forEach((ent, i) => {
+      if (i > 0) {
+        const rel = p.relations[i - 1];
+        const conf = rel.confidence || '确证';
+        const dir = rel.source_id === p.entities[i - 1].id ? '→' : '←';
+        rows.push(`<div class="p-rel">—${dir} ${escapeHtml(rel.name)} <span style="color:${CONF_STYLE[conf]}">${conf}</span> ${dir === '→' ? '→' : '—'}—</div>`);
+      }
+      rows.push(`<div class="p-ent" onclick="focusEntity(${ent.id})">${nameOf(ent)}<span class="tag">${escapeHtml(ent.category)}</span></div>`);
+    });
+    html += `<div class="p-path"><div class="p-head2">路径${r.paths.length > 1 ? pi + 1 : ''}（${p.hops} 跳）<button class="ghost" onclick="highlightCanvasPath(${pi})">画布高亮</button></div>${rows.join('')}</div>`;
   });
-  $('path-title').textContent = `最短路径（${r.hops} 跳）`;
-  $('path-body').innerHTML = rows.join('');
+  state._lastPaths = r.paths;
+  $('path-title').textContent = `关系路径（共${r.paths.length}条）`;
+  $('path-body').innerHTML = html;
   panel.style.display = 'block';
 }
+
+// 画布路径高亮：路径元素保持原样，其余整体降为微透明
+function applyCanvasHi(nodes, rels) {
+  state.pathHi = { nodes, rels };
+  for (const n of simNodes) {
+    const on = nodes.has(n.id);
+    n.mesh.material.transparent = true;
+    n.mesh.material.opacity = on ? 1 : 0.06;
+    if (n.label) n.label.material.opacity = on ? 1 : 0.08;
+  }
+  for (const l of simLinks) {
+    const base = l.line.userData.baseOpacity === undefined ? 0.9 : l.line.userData.baseOpacity;
+    const on = rels.has(l.id);
+    l.line.material.opacity = on ? Math.max(base, 0.95) : 0.05;
+    if (l.label) l.label.material.opacity = on ? 1 : 0.06;
+  }
+}
+
+function clearCanvasHi() {
+  if (!state.pathHi) return;
+  state.pathHi = null;
+  for (const n of simNodes) {
+    n.mesh.material.opacity = 1;
+    if (n.label) n.label.material.opacity = 1;
+  }
+  for (const l of simLinks) {
+    l.line.material.opacity = l.line.userData.baseOpacity === undefined ? 0.9 : l.line.userData.baseOpacity;
+    if (l.label) l.label.material.opacity = 1;
+  }
+}
+
+// 路径面板/证据路径共用：按 路径对象 或 hops 数组高亮
+function highlightCanvasPath(pi) {
+  const p = state._lastPaths && state._lastPaths[pi];
+  if (!p) return;
+  applyCanvasHi(new Set(p.entities.map((e) => e.id)), new Set(p.relations.map((x) => x.id)));
+}
+window.highlightCanvasPath = highlightCanvasPath;
+
 async function askPath(fromId, fromName) {
-  const to = prompt(`查询「${fromName}」到哪位实体的最短路径？（输入名称或id，最多6层）`, '');
+  const to = prompt(`查询「${fromName}」到哪位实体的关系路径？（输入名称或id，2-6层，最多返回5条）`, '');
   if (to === null) return;
   const key = to.trim();
   if (!key) return;
   try {
-    const r = await api(`/api/graph/path?from=${fromId}&to=${encodeURIComponent(key)}`);
+    const r = await api(`/api/graph/paths?from=${fromId}&to=${encodeURIComponent(key)}`);
     renderPathPanel(r);
   } catch (e) { toast(e.message, true); }
 }
 window.askPath = askPath;
-$('path-close').addEventListener('click', () => { $('path-panel').style.display = 'none'; });
+$('path-close').addEventListener('click', () => { $('path-panel').style.display = 'none'; clearCanvasHi(); });
 
 /* ================= OpenCode 对话 ================= */
 function appendMsg(role, text, chips, chipWarn) {
@@ -1582,6 +1753,7 @@ async function refreshAll(rebuild = true) {
   const [graph, meta] = await Promise.all([api('/api/graph'), api('/api/meta')]);
   state.entities = graph.entities;
   state.relations = graph.relations;
+  state.aliases = graph.aliases || {};
   state.version = meta.version;
   state.imageCounts = new Map((graph.image_counts || []).map((x) => [Number(x.entity_id), x.count]));
   // 推理开关开启时同步刷新推理缓存，保证叠加边与新数据一致
@@ -1636,6 +1808,7 @@ async function askSubmit() {
 }
 
 function renderAskResult(r) {
+  state.lastAsk = r;
   const box = $('a-result');
   const chips = r.steps.map((s) => {
     const icon = s.status === 'ok' ? '✔' : s.status === 'timeout' ? '⏱' : '✘';
@@ -1664,8 +1837,32 @@ function renderAskResult(r) {
   if (r.synthesis) synth = `<div class="ask-synth">${renderSynthesis(r.synthesis, r.entities)}</div>`;
   else if (r.synth_error) synth = `<div class="kv" style="color:#e0a768">综述生成失败：${escapeHtml(r.synth_error)}</div>`;
 
-  box.innerHTML = `<div class="ask-steps">${chips}</div>${synth}<div class="ask-sec">实体（${r.entities.length}）</div>${ents}${cn}`;
+  // 证据路径：A —关系→ B 链条，可一键画布高亮
+  let ev = '';
+  if (r.evidence_paths && r.evidence_paths.length) {
+    const ename = (id) => { const e = r.entities.find((x) => x.id === id); return e ? escapeHtml(e.name) : '#' + id; };
+    const cname = (c) => `<span style="color:${CONF_STYLE[c] || '#8fa3c0'}">${c}</span>`;
+    ev = `<div class="ask-sec">证据路径（${r.evidence_paths.length}）</div>` + r.evidence_paths.map((p, pi) => {
+      const chain = p.hops.map((h) => `${ename(h.source_id)} —${escapeHtml(h.name)}${h.confidence && h.confidence !== '确证' ? '(' + cname(h.confidence) + ')' : ''}→ ${ename(h.target_id)}`).join('　⇒　');
+      return `<div class="kv ask-path-row">⛓ ${chain} <button class="ghost" onclick="highlightEvidencePath(${pi})">高亮</button></div>`;
+    }).join('');
+  }
+
+  box.innerHTML = `<div class="ask-steps">${chips}</div>${synth}${ev}<div class="ask-sec">实体（${r.entities.length}）</div>${ents}${cn}`;
 }
+
+// 证据路径一键高亮：以最近一次提问结果中的 hops 构建高亮集
+function highlightEvidencePath(pi) {
+  const r = state.lastAsk;
+  if (!r || !r.evidence_paths || !r.evidence_paths[pi]) return;
+  const p = r.evidence_paths[pi];
+  const nodes = new Set([p.hops[0].source_id, p.hops[p.hops.length - 1].target_id]);
+  const rels = new Set();
+  for (const h of p.hops) { rels.add(h.id); nodes.add(h.source_id); nodes.add(h.target_id); }
+  applyCanvasHi(nodes, rels);
+  toast('已在画布高亮该证据路径');
+}
+window.highlightEvidencePath = highlightEvidencePath;
 
 // 综述文本中的「名称#id」渲染为可点击引用
 function renderSynthesis(text, entities) {

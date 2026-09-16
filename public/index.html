@@ -63,11 +63,27 @@
           <input id="r-name" placeholder="例如：位于">
           <label>大类（对应线型/颜色）</label>
           <select id="r-category"></select>
+          <label>置信度</label>
+          <select id="r-confidence">
+            <option value="确证">确证（有明确依据）</option>
+            <option value="推测">推测（合理推断）</option>
+            <option value="存疑">存疑（待核实）</option>
+          </select>
+          <label>来源引用（URL / 文献+页码，可选）</label>
+          <input id="r-source-ref" placeholder="例如：《明史》卷304">
           <label>终点实体</label>
           <select id="r-target"></select>
           <div class="row"><button class="primary" id="r-submit">添加</button></div>
         </div>
-        <div class="card"><h3>关系列表</h3><div id="r-list"></div></div>
+        <div class="card"><h3>关系列表</h3>
+          <div class="conf-filter" id="conf-filter">
+            <span class="cf-chip active" data-c="">全部</span>
+            <span class="cf-chip" data-c="确证">确证</span>
+            <span class="cf-chip" data-c="推测">推测</span>
+            <span class="cf-chip" data-c="存疑">存疑</span>
+          </div>
+          <div id="r-list"></div>
+        </div>
       </div>
 
       <div class="tabbody" id="tab-search">

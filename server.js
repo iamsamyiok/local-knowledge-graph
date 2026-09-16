@@ -43,7 +43,27 @@ function agentSessionInfo() {
 
 // ---------- 实体 ----------
 api.get('/entities', (req, res) => res.json(db.listEntities()));
-api.post('/entities', (req, res) => res.json(db.addEntity(req.body, '手工')));
+api.post('/entities', (req, res) => {
+  try {
+    const body = req.body || {};
+    const name = body.name;
+    // 同名消歧：主名或别名占用时，按 merge_into / force 分流
+    if (typeof name === 'string' && name.trim()) {
+      const conflicts = db.findNameConflicts(name);
+      if (conflicts.length) {
+        const mergeInto = Number(body.merge_into);
+        if (body.merge_into !== undefined && Number.isInteger(mergeInto) && mergeInto > 0) {
+          const alias = db.addAlias(mergeInto, name.trim(), '手工');
+          return res.json({ merged: true, alias, entity: db.getEntity(mergeInto) });
+        }
+        if (body.force !== true && body.force !== 1 && body.force !== '1') {
+          return res.status(409).json({ error: `名称"${name.trim()}"已被占用，可并入现有实体、改用限定名或强制创建`, conflicts });
+        }
+      }
+    }
+    res.json(db.addEntity(body, '手工'));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, conflicts: e.conflicts }); }
+});
 api.put('/entities/:id', (req, res) => res.json(db.updateEntity(Number(req.params.id), req.body, '手工')));
 api.delete('/entities/:id', (req, res) => {
   const r = db.deleteEntity(Number(req.params.id), '手工');
@@ -81,6 +101,43 @@ api.get('/graph/path', (req, res) => {
 });
 
 // ---------- 撤销最近操作（快照逆向写入） ----------
+api.get('/aliases', (req, res) => res.json(db.aliasMap()));
+
+api.get('/aliases/records', (req, res) => res.json(db.aliasRecords()));
+
+api.post('/aliases', (req, res) => {
+  try {
+    const { entity_id, alias } = req.body || {};
+    res.json(db.addAlias(Number(entity_id), alias, '手工'));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, conflicts: e.conflicts }); }
+});
+
+api.delete('/aliases/:id', (req, res) => {
+  try { res.json(db.removeAlias(Number(req.params.id), '手工')); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
+api.get('/graph/paths', (req, res) => {
+  try {
+    const fromId = db.resolveKey(req.query.from);
+    const toId = db.resolveKey(req.query.to);
+    let maxHops = 4;
+    if (req.query.max !== undefined && String(req.query.max).trim() !== '') {
+      maxHops = Number(req.query.max);
+      if (!Number.isInteger(maxHops)) return res.status(400).json({ error: 'max必须为整数' });
+    }
+    res.json(db.findPaths(fromId, toId, { maxHops }));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message, candidates: e.candidates }); }
+});
+
+// ---------- 相似实体（语义Top-K，结构降级） ----------
+api.get('/similar/:id', async (req, res) => {
+  try {
+    const k = req.query.k !== undefined ? Number(req.query.k) : 8;
+    res.json(await require('./lib/similar').similarEntities(Number(req.params.id), Number.isInteger(k) ? k : 8));
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
 api.post('/undo', (req, res) => {
   try { res.json({ ok: true, ...db.undoLast('手工'), counts: db.counts(), version: db.getVersion() }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }

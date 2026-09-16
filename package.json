@@ -25,7 +25,8 @@
     "test": "node --test \"test/*.test.js\""
   },
   "dependencies": {
-    "express": "^4.22.3"
+    "express": "^4.22.3",
+    "pdf-parse": "^2.4.5"
   },
   "keywords": [
     "knowledge-graph",

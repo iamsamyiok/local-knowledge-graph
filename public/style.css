@@ -19,6 +19,18 @@
   header .badge.ok { color: #7ee787; border-color: #2ea04366; }
   header .badge.off { color: #f0883e; border-color: #f0883e66; }
 
+  /* 置信度徽章与过滤条 */
+  .conf-badge { font-size: 10px; border: 1px solid; border-radius: 8px; padding: 0 6px; margin-left: 5px; vertical-align: 1px; }
+  .conf-filter { display: flex; gap: 5px; margin-bottom: 8px; flex-wrap: wrap; }
+  .cf-chip { font-size: 11px; color: #8fa3c0; border: 1px solid #2a3a5c; border-radius: 10px; padding: 2px 10px; cursor: pointer; user-select: none; }
+  .cf-chip.active { color: #7fd1ff; border-color: #58a6ff; background: #16233f; }
+  .alias-chip { display: inline-block; font-size: 11px; color: #cfe2ff; border: 1px solid #2a3a5c; border-radius: 8px; padding: 0 6px; margin-right: 4px; }
+  .alias-chip i { font-style: normal; color: #f0883e; cursor: pointer; margin-left: 3px; }
+  .p-path { margin-bottom: 10px; border-top: 1px dashed #24344f; padding-top: 6px; }
+  .p-path:first-child { border-top: none; padding-top: 0; }
+  .p-head2 { font-size: 11.5px; color: #7fd1ff; margin-bottom: 4px; display: flex; align-items: center; gap: 8px; }
+  .ask-path-row { line-height: 1.7; }
+
   button {
     background: #1b2b4d; color: #cfe2ff; border: 1px solid #2f4a7a; border-radius: 5px;
     padding: 5px 12px; cursor: pointer; font-size: 12px; font-family: inherit;
@@ -484,3 +496,11 @@
   html[data-theme="light"] #file-menu button:active { background: #eaf3ff; }
   html[data-theme="light"] .m-btn { background: #eaf3ff; }
   html[data-theme="light"] #m-legend { background: rgba(255, 255, 255, 0.92); }
+
+/* 浅色主题：置信度/别名/路径新增元素适配 */
+html[data-theme="light"] .cf-chip { color: #5a6b85; border-color: #c9d6e8; }
+html[data-theme="light"] .cf-chip.active { color: #1f6feb; border-color: #1f6feb; background: #e8f1ff; }
+html[data-theme="light"] .alias-chip { color: #2c3e57; border-color: #c9d6e8; }
+html[data-theme="light"] .alias-chip i { color: #c44f27; }
+html[data-theme="light"] .p-path { border-top-color: #dfe7f2; }
+html[data-theme="light"] .p-head2 { color: #1a5dc8; }

@@ -99,6 +99,19 @@ const TOOLS = [
     },
   },
   {
+    name: 'kg_path',
+    description: '两实体关系路径枚举：返回最多5条按跳数升序的路径（每跳含关系名/类别/置信度），用于验证两个对象如何间接关联',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        from: { type: 'string', description: '起点实体id或名称' },
+        to: { type: 'string', description: '终点实体id或名称' },
+        max: { type: 'number', description: '可选，最大跳数2-6，默认4' },
+      },
+      required: ['from', 'to'],
+    },
+  },
+  {
     name: 'kg_digest',
     description: '图谱目录：实体大类、关系大类、高频关系名Top20（含数量）、样例实体、规模。回答关系类问题前先取此目录，可显著提升Cypher查询的准确性',
     inputSchema: { type: 'object', properties: {} },
@@ -199,6 +212,11 @@ const HANDLERS = {
   kg_digest: async () => {
     const { digest, stats } = require('./lib/ask').buildDigest();
     return { digest, ...stats };
+  },
+  kg_path: async (args) => {
+    const from = resolveCenter(String(args.from || ''));
+    const to = resolveCenter(String(args.to || ''));
+    return db.findPaths(from.id, to.id, { maxHops: Number.isInteger(args.max) ? args.max : 4 });
   },
   kg_export_rdf: async () => ({ turtle: rdf.exportTurtle(db.getGraph()) }),
   kg_apply_ops: async (args) => {

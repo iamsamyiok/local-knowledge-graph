@@ -1070,6 +1070,11 @@ document.addEventListener('keydown', (e) => {
   }
   if (isTypingContext()) return;
   if (e.key === 'Escape') {
+    if ($('help-panel').classList.contains('show')) {
+      $('help-panel').classList.remove('show');
+      $('info-card').style.display = '';
+      return;
+    }
     if ($('style-panel').classList.contains('show')) { $('style-panel').classList.remove('show'); return; }
     if ($('file-menu').classList.contains('show')) { $('file-menu').classList.remove('show'); return; }
     if (state.selected) { state.selected = null; renderInfoCard(); return; }
@@ -1328,8 +1333,135 @@ function renderStylePanel() {
 $('btn-style').addEventListener('click', () => {
   const p = $('style-panel');
   const opening = !p.classList.contains('show');
-  if (opening) { $('info-card').style.display = 'none'; renderStylePanel(); }
+  if (opening) { $('info-card').style.display = 'none'; renderStylePanel(); mountSettingsUpd(); }
   p.classList.toggle('show');
+});
+
+/* ================= 版本与更新 ================= */
+const UPD = { currentVer: null, last: null, checking: false, applying: false, restarting: false };
+
+function updBoxHTML() {
+  return `<div class="upd-box">
+    <div class="upd-ver">当前版本 <b class="js-upd-cur">${UPD.currentVer || '…'}</b></div>
+    <div class="row" style="gap:6px;margin:6px 0 4px">
+      <button class="js-upd-check">检查更新</button>
+      <button class="js-upd-apply primary" disabled>一键更新</button>
+    </div>
+    <div class="js-upd-status upd-status">点击"检查更新"联网获取最新版本</div>
+  </div>`;
+}
+
+function wireUpdBox(root) {
+  root.querySelector('.js-upd-check').addEventListener('click', doUpdateCheck);
+  root.querySelector('.js-upd-apply').addEventListener('click', doUpdateApply);
+}
+
+function mountSettingsUpd() {
+  const p = $('style-panel');
+  if (!p.querySelector('.upd-box')) {
+    const div = document.createElement('div');
+    div.innerHTML = '<h3 style="margin-top:14px">版本与更新</h3>' + updBoxHTML();
+    p.appendChild(div);
+    wireUpdBox(div);
+  }
+  renderUpdState();
+}
+
+function mountHelpPanel() {
+  const box = $('help-upd');
+  if (box && !box.querySelector('.upd-box')) {
+    box.innerHTML = updBoxHTML();
+    wireUpdBox(box);
+  }
+  renderUpdState();
+}
+
+function renderUpdState() {
+  document.querySelectorAll('.upd-box').forEach((box) => {
+    box.querySelector('.js-upd-cur').textContent = UPD.currentVer || '…';
+    const st = box.querySelector('.js-upd-status');
+    const check = box.querySelector('.js-upd-check');
+    const apply = box.querySelector('.js-upd-apply');
+    check.disabled = UPD.checking || UPD.applying;
+    apply.disabled = !(UPD.last && UPD.last.ok && !UPD.last.up_to_date && UPD.last.behind > 0) || UPD.checking || UPD.applying;
+    st.innerHTML = updStatusHTML();
+  });
+}
+
+function updStatusHTML() {
+  if (UPD.restarting) return `<span style="color:#7fd8a4">已更新，服务重启中，页面将自动刷新…</span>`;
+  if (UPD.applying) return '正在下载并应用更新，请勿关闭应用…';
+  if (UPD.checking) return '正在检查更新…';
+  if (!UPD.last) return '点击"检查更新"联网获取最新版本';
+  const l = UPD.last;
+  if (!l.ok) return `<span style="color:#e08a8a">${escapeHtml(l.error || '检查失败')}</span>`;
+  const rel = l.latest_release ? `，最新发布 ${escapeHtml(l.latest_release.tag || '')}` : '';
+  if (l.up_to_date) return `<span style="color:#7fd8a4">已是最新版本</span>${rel}`;
+  let s = `<span style="color:#e0c068">发现新版本（落后 ${l.behind} 个提交）</span>${rel}`;
+  if (l.latest_release && l.latest_release.url) s += ` · <a href="${l.latest_release.url}" target="_blank" rel="noopener">查看说明</a>`;
+  return s;
+}
+
+async function doUpdateCheck() {
+  if (UPD.checking || UPD.applying) return;
+  UPD.checking = true;
+  renderUpdState();
+  try {
+    const v = await api('/api/version');
+    UPD.currentVer = v.version;
+    UPD.last = await api('/api/update/check');
+  } catch (e) {
+    UPD.last = { ok: false, error: e.message };
+  }
+  UPD.checking = false;
+  renderUpdState();
+}
+
+async function doUpdateApply() {
+  if (!UPD.last || UPD.last.up_to_date || UPD.applying || UPD.checking) return;
+  const oldVer = UPD.currentVer;
+  UPD.applying = true;
+  renderUpdState();
+  try {
+    const r = await api('/api/update/apply', { method: 'POST' });
+    if (r.up_to_date) {
+      UPD.last = { ok: true, up_to_date: true, current_version: r.version };
+    } else {
+      UPD.restarting = true;
+      renderUpdState();
+      pollAfterUpdate(oldVer);
+      return; // restarting 状态保持到页面刷新
+    }
+  } catch (e) {
+    UPD.last = { ok: false, error: e.message };
+  }
+  UPD.applying = false;
+  renderUpdState();
+}
+
+function pollAfterUpdate(oldVer) {
+  setTimeout(async () => {
+    try {
+      const v = await api('/api/version');
+      if (v.version !== oldVer) { location.reload(); return; }
+    } catch (_) { /* 重启中，继续等 */ }
+    pollAfterUpdate(oldVer);
+  }, 1200);
+}
+
+// 启动时静默获取版本号
+api('/api/version').then((v) => { UPD.currentVer = v.version; renderUpdState(); }).catch(() => {});
+
+/* ================= 帮助面板 ================= */
+$('btn-help').addEventListener('click', () => {
+  const p = $('help-panel');
+  const opening = !p.classList.contains('show');
+  if (opening) { $('info-card').style.display = 'none'; mountHelpPanel(); }
+  p.classList.toggle('show');
+});
+$('help-close').addEventListener('click', () => {
+  $('help-panel').classList.remove('show');
+  $('info-card').style.display = '';
 });
 
 /* ================= 文件菜单（手机端：打开/保存/另存/网页版） ================= */
@@ -1393,6 +1525,7 @@ const HEADER_LABELS = [
   ['btn-relayout', '重新布局', '布局'],
   ['btn-resetview', '重置视角', '视角'],
   ['btn-style', '视图设置', '设置'],
+  ['btn-help', '帮助', '帮助'],
 ];
 function compactHeader(mobile) {
   for (const [id, , short] of HEADER_LABELS) {

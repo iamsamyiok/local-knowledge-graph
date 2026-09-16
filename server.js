@@ -11,6 +11,7 @@ const V = require('./lib/validator');
 const inference = require('./lib/inference');
 const embeddings = require('./lib/embeddings');
 const askLib = require('./lib/ask');
+const updater = require('./lib/updater');
 const importer = require('./lib/importer');
 
 const PORT = Number(process.env.PORT || 3000);
@@ -109,6 +110,30 @@ api.get('/ask/settings', (req, res) => {
 api.put('/ask/settings', (req, res) => {
   embeddings.saveSettings({ ask_synthesis: !!(req.body || {}).synthesis });
   res.json({ ok: true, synthesis: embeddings.loadSettings().ask_synthesis !== false });
+});
+
+// ---------- 版本与更新 ----------
+api.get('/version', (req, res) => res.json({ version: updater.currentVersion() }));
+
+api.get('/update/check', async (req, res) => {
+  try { res.json(await updater.checkUpdate()); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+let updating = false;
+api.post('/update/apply', (req, res) => {
+  if (updating) return res.status(429).json({ error: '更新正在进行中，请稍候' });
+  updating = true;
+  try {
+    const r = updater.applyUpdate();
+    if (!r.ok) return res.status(400).json(r);
+    res.json(r);
+    if (!r.up_to_date) scheduleRestart();
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  } finally {
+    updating = false;
+  }
 });
 
 // ---------- 实体图片绑定 ----------
@@ -559,8 +584,41 @@ function seedIfEmpty() {
 bootstrap();
 
 const HOST = process.env.KG_HOST || '127.0.0.1';
-app.listen(PORT, HOST, () => {
-  console.log(`本地知识图谱整合器已启动: http://localhost:${PORT} (监听${HOST}${HOST === '127.0.0.1' ? '，如需局域网访问设 KG_HOST=0.0.0.0' : '，已暴露到局域网'})`);
-  console.log('数据文件: data/kg.db (本地Git仓库托管，可打保存点/回溯)');
-  console.log('全流程本地运行，仅OpenCode可联网补全公开信息');
-});
+
+// 自动重启（更新后）：派生脱离的新进程接管，当前进程退出
+function scheduleRestart() {
+  console.log('[更新] 3秒后自动重启服务…');
+  setTimeout(() => {
+    try {
+      const { spawn } = require('child_process');
+      const log = fs.openSync(path.join(__dirname, 'data', 'restart.log'), 'a');
+      const child = spawn(process.execPath, [...process.execArgv, path.join(__dirname, 'server.js')], {
+        detached: true, stdio: ['ignore', log, log], env: process.env, cwd: __dirname,
+      });
+      child.unref();
+      console.log(`[更新] 新进程已启动 (pid ${child.pid})，当前进程即将退出`);
+      fs.writeSync(log, `\n[${new Date().toISOString()}] 更新重启：新进程 pid ${child.pid}\n`);
+      setTimeout(() => process.exit(0), 500);
+    } catch (e) {
+      console.error('[更新] 自动重启失败，请手动重新运行启动脚本：', e.message);
+    }
+  }, 3000);
+}
+
+// 端口绑定（更新重启衔接时旧进程尚未释放端口，自动重试）
+(function bind(attempt) {
+  const server = app.listen(PORT, HOST, () => {
+    console.log(`本地知识图谱整合器已启动: http://localhost:${PORT} (监听${HOST}${HOST === '127.0.0.1' ? '，如需局域网访问设 KG_HOST=0.0.0.0' : '，已暴露到局域网'})`);
+    console.log('数据文件: data/kg.db (本地Git仓库托管，可打保存点/回溯)');
+    console.log('全流程本地运行，仅OpenCode可联网补全公开信息');
+  });
+  server.on('error', (e) => {
+    if (e.code === 'EADDRINUSE' && attempt < 15) {
+      console.log(`端口 ${PORT} 被占用（可能为更新重启衔接），1秒后重试 (${attempt + 1}/15)`);
+      setTimeout(() => bind(attempt + 1), 1000);
+    } else {
+      console.error('监听失败:', e.message);
+      process.exit(1);
+    }
+  });
+})(0);

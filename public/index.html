@@ -22,6 +22,7 @@
     <button id="btn-relayout" title="重新进行力导向布局">重新布局</button>
     <button id="btn-resetview" title="重置相机视角">重置视角</button>
     <button id="btn-style" title="自定义实体/关系的颜色、大小与线型">视图设置</button>
+    <button id="btn-help" title="帮助：查看版本现状、检查更新与使用指南">帮助</button>
     <button id="btn-inference" title="叠加显示推理得到的隐性关系（虚线，OWL传递/对称/逆规则），点击推理边可查看推导依据">推理</button>
     <button id="m-file" class="m-btn" title="文件：打开/保存/另存">文件</button>
   </header>
@@ -149,6 +150,34 @@
       </div>
       <div id="info-card"></div>
       <div id="style-panel"></div>
+      <div id="help-panel">
+        <div class="hp-head"><span>帮助</span><span id="help-close" title="关闭">×</span></div>
+        <div class="hp-body">
+          <h3>关于</h3>
+          <p class="hp-p">本地知识图谱整合器 —— 把文档与联网信息整理成可导航的 3D 知识图谱。全流程本地运行，数据存于本机 data/ 目录（独立 Git 仓库托管，可回溯）。</p>
+          <h3>版本与更新</h3>
+          <div id="help-upd"></div>
+          <div class="hp-line">详细帮助文档：项目目录下 <b>HELP.md</b></div>
+          <div class="hp-line">发布记录：<a href="https://github.com/iamsamyiok/local-knowledge-graph/releases" target="_blank" rel="noopener">GitHub Releases</a></div>
+          <h3>快速上手</h3>
+          <ul class="hp-list">
+            <li><b>AI 对话建图</b>：右侧输入自然语言（如"联网查一下珠穆朗玛峰的海拔并建入图谱"），或上传文档（md/txt/pdf/docx）批量抽取</li>
+            <li><b>检索页签</b>：智能提问（一句话找关系）、语义/关键词混合检索</li>
+            <li><b>最短路径</b>：搜索或列表选中实体后，用"路径"功能查两实体关联链路</li>
+            <li><b>撤销</b>：按钮或 Ctrl+Z，可连续撤销；删除实体仅恢复实体本身，关联关系可在日志页看到级联记录</li>
+            <li><b>推理</b>：开关叠加虚线显示的隐性关系（传递/对称/逆规则），点击可见推导依据</li>
+            <li><b>保存点与回溯</b>：版本页签打保存点，随时回滚到任一历史状态</li>
+            <li><b>图片绑定</b>：实体信息卡上传本地图片，自动生成缩略图</li>
+            <li><b>导出</b>：RDF(Turtle)、整库 .db、单文件只读网页版</li>
+          </ul>
+          <h3>键盘快捷键</h3>
+          <ul class="hp-list">
+            <li><b>Ctrl+F</b> 聚焦搜索框　<b>Ctrl+Z</b> 撤销　<b>Delete</b> 删除选中　<b>Esc</b> 逐层关闭面板/取消选中</li>
+          </ul>
+          <h3>数据安全</h3>
+          <p class="hp-p">图谱数据、图片、API Key 全部保存在本机 data/ 目录（已排除在代码仓库外）。语义检索的 API Key 仅存本地，服务端永不回传真实值。</p>
+        </div>
+      </div>
       <div id="empty-hint" style="display:none">暂无数据<br>在左侧添加实体，或在右侧让 OpenCode 联网补全</div>
       <div id="tooltip3d" style="display:none"></div>
       <div id="path-panel" style="display:none">

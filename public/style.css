@@ -343,3 +343,32 @@
   }
   .syn-ref { color: #7fd1ff; cursor: pointer; border-bottom: 1px dashed #7fd1ff88; }
   .syn-ref:hover { color: #aee4ff; }
+
+  /* ---------- 帮助面板 ---------- */
+  #help-panel {
+    position: absolute; top: 12px; right: 12px; width: 340px; max-height: calc(100% - 24px);
+    overflow-y: auto; display: none; z-index: 24;
+    background: rgba(13, 20, 36, 0.97); border: 1px solid #2a3a5c; border-radius: 8px; padding: 12px;
+  }
+  #help-panel.show { display: block; }
+  .hp-head {
+    display: flex; justify-content: space-between; align-items: center;
+    color: #7fd1ff; font-size: 14px; font-weight: 600; margin-bottom: 8px;
+  }
+  .hp-head span:last-child { cursor: pointer; color: #8fa3c0; font-size: 17px; padding: 0 4px; }
+  .hp-head span:last-child:hover { color: #d7dee9; }
+  .hp-body h3 { color: #7fd1ff; font-size: 12.5px; margin: 12px 0 5px; border-bottom: 1px solid #26334c; padding-bottom: 3px; }
+  .hp-p { font-size: 11.5px; color: #b9c8e0; line-height: 1.65; margin: 4px 0; }
+  .hp-line { font-size: 11.5px; color: #8fa3c0; margin: 4px 0; line-height: 1.6; }
+  .hp-line a, .upd-status a { color: #7fd1ff; text-decoration: underline; }
+  .hp-list { margin: 4px 0; padding-left: 16px; font-size: 11.5px; color: #b9c8e0; line-height: 1.75; }
+  .hp-list b { color: #d7dee9; }
+
+  /* ---------- 版本与更新 ---------- */
+  .upd-box { border: 1px solid #26334c; border-radius: 8px; padding: 9px 10px; margin-top: 4px; background: rgba(38, 51, 76, 0.2); }
+  .upd-ver { font-size: 12px; color: #d7dee9; margin-bottom: 4px; }
+  .upd-ver b { color: #7fd1ff; }
+  .upd-status { font-size: 11px; color: #8fa3c0; line-height: 1.6; min-height: 15px; word-break: break-all; }
+  @media (max-width: 768px) {
+    #help-panel { width: calc(100vw - 24px); right: 12px; }
+  }

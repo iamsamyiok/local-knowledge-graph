@@ -289,3 +289,32 @@ test('db: pruneMissingImages剔除文件缺失的图片行', () => {
   assert.equal(left.length, 1);
   assert.equal(left[0].stored_path, 'uploads/real.png');
 });
+
+/* ---------- 关系图片绑定 ---------- */
+test('db: 关系图片增删查与404校验', () => {
+  const e1 = db.addEntity({ name: '关图源', category: '抽象实体' }, '手工');
+  const e2 = db.addEntity({ name: '关图标', category: '抽象实体' }, '手工');
+  const rel = db.addRelation({ source_id: e1.id, target_id: e2.id, name: '关图关系', category: '互动' }, '手工');
+  assert.equal(db.listRelationImages(rel.id).length, 0);
+  const img = db.addRelationImage(rel.id, { filename: 'chart.png', stored_path: 'uploads/r1/chart.png', caption: '示意图', thumb_path: 'uploads/r1/t.png' });
+  assert.equal(img.relation_id, rel.id);
+  assert.equal(img.caption, '示意图');
+  assert.equal(db.getRelationImage(img.id).stored_path, 'uploads/r1/chart.png');
+  assert.equal(db.listRelationImages(rel.id).length, 1);
+  // 不存在的关系/图片行 → 404
+  assert.throws(() => db.addRelationImage(99999, { filename: 'x.png', stored_path: 'uploads/x.png' }), /404|不存在/);
+  assert.throws(() => db.deleteRelationImage(99999), /404|不存在/);
+  const del = db.deleteRelationImage(img.id);
+  assert.equal(del.id, img.id);
+  assert.equal(db.listRelationImages(rel.id).length, 0);
+});
+
+test('db: 删除关系时relation_images行级联清除', () => {
+  const e1 = db.addEntity({ name: '级联源', category: '抽象实体' }, '手工');
+  const e2 = db.addEntity({ name: '级联标', category: '抽象实体' }, '手工');
+  const rel = db.addRelation({ source_id: e1.id, target_id: e2.id, name: '级联关系', category: '互动' }, '手工');
+  db.addRelationImage(rel.id, { filename: 'a.png', stored_path: 'uploads/ra.png' });
+  db.addRelationImage(rel.id, { filename: 'b.png', stored_path: 'uploads/rb.png' });
+  db.deleteRelation(rel.id, '手工');
+  assert.equal(db.listRelationImages(rel.id).length, 0);
+});

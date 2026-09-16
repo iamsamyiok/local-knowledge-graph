@@ -317,11 +317,70 @@ api.delete('/images/:imgId', (req, res) => {
   res.json({ deleted: row });
 });
 
+// ---------- 关系图片绑定（与实体图片同模式，目录 r<id>）----------
+api.get('/relations/:id/images', (req, res) => {
+  const id = Number(req.params.id);
+  if (!db.getRelation(id)) return res.status(404).json({ error: `关系id=${id} 不存在` });
+  const rel = (p) => (p ? '/uploads/' + p.replace(/^uploads[\\/]/, '') : null);
+  res.json(db.listRelationImages(id).map((r) => ({ ...r, url: rel(r.stored_path), thumb_url: rel(r.thumb_path) || rel(r.stored_path) })));
+});
+
+api.post('/relations/:id/images', (req, res) => {
+  const id = Number(req.params.id);
+  const { filename, content_b64, caption, thumb_b64 } = req.body || {};
+  if (!filename || !content_b64) return res.status(400).json({ error: '必须提供文件名与内容(content_b64)' });
+  const ext = path.extname(String(filename)).toLowerCase();
+  if (!IMAGE_EXTS.includes(ext)) return res.status(400).json({ error: `仅支持图片格式: ${IMAGE_EXTS.join(' ')}` });
+  let buf;
+  try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'content_b64不是合法的base64' }); }
+  if (!buf.length) return res.status(400).json({ error: '文件内容为空' });
+  if (buf.length > MAX_IMAGE_BYTES) return res.status(400).json({ error: '单张图片不得超过10MB' });
+
+  const dir = path.join(git.DATA_DIR, 'uploads', `r${id}`);
+  fs.mkdirSync(dir, { recursive: true });
+  const safe = path.basename(String(filename)).replace(/[^\w.\-\u4e00-\u9fa5]/g, '_').slice(0, 80) || 'image';
+  const storedPath = path.join('uploads', `r${id}`, `${Date.now()}_${safe}`);
+  fs.writeFileSync(path.join(git.DATA_DIR, storedPath), buf);
+  let thumbPath = '';
+  if (thumb_b64) {
+    try {
+      const tbuf = Buffer.from(thumb_b64, 'base64');
+      if (tbuf.length > 0 && tbuf.length <= 2 * 1024 * 1024) {
+        thumbPath = path.join('uploads', `r${id}`, `${Date.now()}_thumb_${safe}`);
+        fs.writeFileSync(path.join(git.DATA_DIR, thumbPath), tbuf);
+      }
+    } catch (_) { thumbPath = ''; }
+  }
+  try {
+    const row = db.addRelationImage(id, { filename, stored_path: storedPath, caption, thumb_path: thumbPath });
+    const rel = (p) => (p ? '/uploads/' + p.replace(/^uploads[\\/]/, '') : null);
+    res.json({ ...row, url: rel(row.stored_path), thumb_url: rel(row.thumb_path) || rel(row.stored_path) });
+  } catch (e) {
+    cleanupImageFiles([storedPath, thumbPath]);
+    throw e;
+  }
+});
+
+api.delete('/relation-images/:imgId', (req, res) => {
+  const row = db.deleteRelationImage(Number(req.params.imgId));
+  cleanupImageFiles([row.stored_path, row.thumb_path].filter(Boolean));
+  res.json({ deleted: row });
+});
+
+// 删除关系时连带清理其图片文件（表行由外键级联清除）
+api.delete('/relations/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const files = db.listRelationImages(id).flatMap((r) => [r.stored_path, r.thumb_path].filter(Boolean));
+  const out = db.deleteRelation(id, '手工');
+  cleanupImageFiles(files);
+  res.json(out);
+});
+
 // ---------- 关系 ----------
 api.get('/relations', (req, res) => res.json(db.listRelations()));
 api.post('/relations', (req, res) => res.json(db.addRelation(req.body, '手工')));
 api.put('/relations/:id', (req, res) => res.json(db.updateRelation(Number(req.params.id), req.body, '手工')));
-api.delete('/relations/:id', (req, res) => res.json(db.deleteRelation(Number(req.params.id), '手工')));
+// DELETE /relations/:id 已在上方"关系图片"块定义（连带清理图片文件）
 
 // ---------- 图谱 / 日志 ----------
 api.get('/graph', (req, res) => res.json(db.getGraph()));
@@ -369,6 +428,21 @@ api.put('/embeddings/settings', (req, res) => {
     const s = embeddings.saveSettings(patch);
     res.json({ ...s, api_key: s.api_key ? '已配置' : '' });
   } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// 测试连接：用当前（或请求体内临时覆盖的）配置向服务方发一次真实embedding请求
+api.post('/embeddings/test', async (req, res) => {
+  const overrides = req.body || {};
+  if (overrides.api_key === '已配置') delete overrides.api_key; // 占位=沿用已存密钥
+  const s = { ...embeddings.loadSettings(), ...overrides };
+  const started = Date.now();
+  try {
+    const vec = await embeddings.embed(['连接测试'], s);
+    const dim = Array.isArray(vec) && Array.isArray(vec[0]) ? vec[0].length : (vec && vec.length) || 0;
+    res.json({ ok: true, model: s.model, base_url: s.base_url, dim, ms: Date.now() - started });
+  } catch (e) {
+    res.status(400).json({ ok: false, error: e.message, ms: Date.now() - started });
+  }
 });
 
 api.post('/embeddings/build', async (req, res) => {

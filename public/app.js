@@ -12,6 +12,7 @@ const state = {
   inferredData: null,      // /api/inference 缓存 {inferred, entities, ontology}
   imageCounts: new Map(),  // entityId -> 图片数量
   entityImages: new Map(), // entityId -> [图片行]
+  relationImages: new Map(), // relationId -> [图片行]
   meta: null,              // /api/meta 缓存（图例与下拉框用）
   aliases: {},             // entityId -> [别名]（/api/graph 附带）
   confFilter: '',          // 关系置信度过滤：''=全部 | 确证 | 推测 | 存疑
@@ -623,6 +624,10 @@ function renderInfoCard() {
     const r = state.relations.find((x) => x.id === rid);
     if (!r) { card.style.display = 'none'; return; }
     const s = state.entityMap.get(r.source_id), t = state.entityMap.get(r.target_id);
+    const rimgs = state.relationImages.get(rid);
+    const rimgHtml = `<div id="rimg-section"><div class="kv"><b>图片</b>：${rimgs ? (rimgs.length ? rimgs.length + ' 张' : '（无）') : '加载中…'}</div>` +
+      (rimgs && rimgs.length ? `<div id="img-grid">` + rimgs.map((im, i) => `<img src="${escapeHtml(im.thumb_url || im.url)}" title="${escapeHtml(im.caption || im.filename)}" onclick="openRelLightbox(${rid},${i})">`).join('') + `</div>` : '') +
+      `</div>`;
     card.innerHTML = `
       <h4>${escapeHtml(r.name)} <span class="tag" style="color:${RELATION_STYLE[r.category].css};border-color:${RELATION_STYLE[r.category].css}55">${r.category}关系</span> ${confBadge(r)}</h4>
       <div class="kv"><b>${s ? escapeHtml(s.entity.name) : '?'}</b> --&gt; <b>${t ? escapeHtml(t.entity.name) : '?'}</b></div>
@@ -632,8 +637,10 @@ function renderInfoCard() {
           ${['确证', '推测', '存疑'].map((c) => `<option value="${c}"${(r.confidence || '确证') === c ? ' selected' : ''}>${c}</option>`).join('')}
         </select></div>
       <div class="kv"><b>来源引用</b>：<input id="rel-sref" value="${escapeHtml(r.source_ref || '')}" placeholder="URL/文献+页码" style="width:150px"></div>
-      <div class="btns"><button onclick="saveRelMeta(${r.id})">保存标注</button><button class="danger" onclick="delRelation(${r.id})">删除</button></div>`;
+      ${rimgHtml}
+      <div class="btns"><button onclick="saveRelMeta(${r.id})">保存标注</button><button onclick="$('entity-img-input').click()">绑图片</button><button class="danger" onclick="delRelation(${r.id})">删除</button></div>`;
     card.style.display = 'block';
+    if (!rimgs) loadRelationImages(rid);
   }
 }
 function escapeHtml(s) {
@@ -740,10 +747,13 @@ document.body.appendChild(imgInput);
 window.$ = $; // 信息卡内联onclick需访问$
 
 imgInput.addEventListener('change', async () => {
-  const id = state.selected && state.selected.type === 'entity' ? state.selected.id : null;
+  const sel = state.selected;
+  const isRel = sel && sel.type === 'relation';
+  const id = sel && (sel.type === 'entity' || sel.type === 'relation') ? sel.id : null;
   const files = [...imgInput.files];
   imgInput.value = '';
   if (!id || !files.length) return;
+  const postUrl = isRel ? `/api/relations/${id}/images` : `/api/entities/${id}/images`;
   for (const f of files) {
     try {
       if (f.size > 10 * 1024 * 1024) throw new Error('超过10MB上限');
@@ -751,15 +761,20 @@ imgInput.addEventListener('change', async () => {
       const thumb = await makeThumbB64(f);
       let caption = '';
       if (files.length === 1) caption = prompt('图片备注（可留空）', '') || '';
-      await api(`/api/entities/${id}/images`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, caption, thumb_b64: thumb }) });
+      await api(postUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, caption, thumb_b64: thumb }) });
       toast(`已绑定图片 ${f.name}`);
     } catch (e) { toast(`图片 ${f.name} 绑定失败: ${e.message}`, true); }
   }
-  state.entityImages.delete(id);
-  const cnt = await api(`/api/entities/${id}/images`);
-  state.entityImages.set(id, cnt);
-  state.imageCounts.set(id, cnt.length);
-  await refreshAll(false);
+  if (isRel) {
+    const rows = await api(`/api/relations/${id}/images`);
+    state.relationImages.set(id, rows);
+  } else {
+    state.entityImages.delete(id);
+    const cnt = await api(`/api/entities/${id}/images`);
+    state.entityImages.set(id, cnt);
+    state.imageCounts.set(id, cnt.length);
+    await refreshAll(false);
+  }
   if (state.selected && state.selected.id === id) renderInfoCard();
 });
 
@@ -786,22 +801,39 @@ async function loadEntityImages(entityId) {
   } catch (e) { toast(e.message, true); }
 }
 
+async function loadRelationImages(relationId) {
+  try {
+    const rows = await api(`/api/relations/${relationId}/images`);
+    state.relationImages.set(relationId, rows);
+    if (state.selected && state.selected.type === 'relation' && state.selected.id === relationId) renderInfoCard();
+  } catch (e) { toast(e.message, true); }
+}
+
 /* ---- 灯箱 ---- */
-let lbState = null; // { list, idx }
+let lbState = null; // { kind:'entity'|'relation', list, idx }
 function openLightbox(entityId, idx) {
   const list = state.entityImages.get(entityId) || [];
   if (!list.length) return;
-  lbState = { list, idx };
+  lbState = { kind: 'entity', list, idx };
   renderLightbox();
   $('lightbox').classList.add('show');
 }
 window.openLightbox = openLightbox;
 
+function openRelLightbox(relationId, idx) {
+  const list = state.relationImages.get(relationId) || [];
+  if (!list.length) return;
+  lbState = { kind: 'relation', list, idx };
+  renderLightbox();
+  $('lightbox').classList.add('show');
+}
+window.openRelLightbox = openRelLightbox;
+
 function renderLightbox() {
   if (!lbState) return;
   const im = lbState.list[lbState.idx];
   $('lb-img').src = im.url;
-  $('lb-cap').textContent = (im.caption || im.filename) + `（实体#${im.entity_id}）`;
+  $('lb-cap').textContent = (im.caption || im.filename) + `（${lbState.kind === 'relation' ? '关系' : '实体'}#${lbState.kind === 'relation' ? im.relation_id : im.entity_id}）`;
   $('lb-pos').textContent = `${lbState.idx + 1} / ${lbState.list.length}`;
 }
 
@@ -822,6 +854,16 @@ async function delImage() {
   const im = lbState.list[lbState.idx];
   if (!confirm(`删除图片绑定「${im.filename}」？文件将从磁盘移除。`)) return;
   try {
+    if (lbState.kind === 'relation') {
+      await api(`/api/relation-images/${im.id}`, { method: 'DELETE' });
+      const rid = im.relation_id;
+      lbState.list.splice(lbState.idx, 1);
+      state.relationImages.set(rid, lbState.list);
+      if (!lbState.list.length) closeLightbox(); else renderLightbox();
+      toast('图片绑定已删除');
+      if (state.selected && state.selected.type === 'relation' && state.selected.id === rid) renderInfoCard();
+      return;
+    }
     await api(`/api/images/${im.id}`, { method: 'DELETE' });
     const eid = im.entity_id;
     lbState.list.splice(lbState.idx, 1);
@@ -1043,9 +1085,10 @@ async function loadSimilar(id) {
 window.loadSimilar = loadSimilar;
 
 async function delRelation(id) {
-  if (!confirm(`删除关系 #${id}？`)) return;
+  if (!confirm(`删除关系 #${id}？其绑定的图片文件将一并移除。`)) return;
   try {
     await api(`/api/relations/${id}`, { method: 'DELETE' });
+    state.relationImages.delete(id);
     if (state.selected && state.selected.id === id) state.selected = null;
     toast('关系已删除');
     await refreshAll();
@@ -2020,6 +2063,7 @@ async function loadSearchStatus() {
     const [st, cfg] = await Promise.all([api('/api/embeddings/status'), api('/api/embeddings/settings')]);
     $('s-status').textContent = `已索引 ${st.indexed}/${st.total_entities}`;
     if (!$('s-model').value) $('s-model').value = cfg.model;
+    if (!$('s-baseurl').value) $('s-baseurl').value = cfg.base_url || 'https://api.siliconflow.cn/v1';
     $('s-key').placeholder = cfg.api_key === '已配置' ? '已配置（输入新值可更换）' : '仅存本地 data/settings.json';
   } catch (_) { /* 服务未就绪时静默 */ }
 }
@@ -2110,14 +2154,36 @@ try {
 } catch (_) { /* 浏览器不支持时依赖手动刷新 */ }
 
 $('s-save').addEventListener('click', async () => {
-  const patch = { model: $('s-model').value.trim() || 'BAAI/bge-m3' };
+  const patch = {
+    model: $('s-model').value.trim() || 'BAAI/bge-m3',
+    base_url: $('s-baseurl').value.trim() || 'https://api.siliconflow.cn/v1',
+  };
   const key = $('s-key').value.trim();
   if (key) patch.api_key = key;
   try {
     await api('/api/embeddings/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
     $('s-key').value = '';
+    $('s-status').textContent = '配置已保存';
     loadSearchStatus();
   } catch (e) { $('s-status').textContent = e.message; }
+});
+
+// 测试连接：用页面上当前填写的配置（未保存的也生效）向服务方发一次真实请求
+$('s-test').addEventListener('click', async () => {
+  const btn = $('s-test');
+  btn.disabled = true;
+  $('s-status').textContent = '测试中…';
+  const patch = {
+    model: $('s-model').value.trim() || 'BAAI/bge-m3',
+    base_url: $('s-baseurl').value.trim() || 'https://api.siliconflow.cn/v1',
+  };
+  const key = $('s-key').value.trim();
+  if (key) patch.api_key = key;
+  try {
+    const r = await api('/api/embeddings/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch) });
+    $('s-status').textContent = `连接成功：${r.model} 维度${r.dim} 耗时${r.ms}ms`;
+  } catch (e) { $('s-status').textContent = `连接失败：${e.message}`; }
+  btn.disabled = false;
 });
 
 $('s-build').addEventListener('click', async () => {

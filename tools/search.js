@@ -10,7 +10,7 @@
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'kg.db');
+const { DB_PATH } = require('../lib/paths');
 
 function fail(msg, code) {
   console.error(msg);

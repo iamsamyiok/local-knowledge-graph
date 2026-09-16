@@ -1,8 +1,22 @@
 {
-  "name": "local-kg-integrator",
-  "version": "1.4.1",
-  "description": "本地知识图谱信息整合器：3D可视化 + 双操作模式 + Git回溯 + RDF合规",
+  "name": "local-knowledge-graph",
+  "version": "1.5.0",
+  "description": "本地知识图谱整合器：3D可视化 + AI对话建图 + 智能检索 + Git回溯 + RDF合规，全流程本地运行",
   "main": "server.js",
+  "bin": {
+    "kg": "bin/cli.js"
+  },
+  "files": [
+    "bin/",
+    "lib/",
+    "public/",
+    "tools/",
+    "mcp/",
+    ".opencode/",
+    "server.js",
+    "HELP.md",
+    "README.md"
+  ],
   "engines": {
     "node": ">=22.5"
   },
@@ -13,10 +27,18 @@
   "dependencies": {
     "express": "^4.22.3"
   },
-  "directories": {
-    "lib": "lib"
-  },
-  "keywords": [],
-  "author": "",
-  "license": "ISC"
+  "keywords": [
+    "knowledge-graph",
+    "3d-visualization",
+    "rdf",
+    "local-first",
+    "opencode",
+    "sqlite"
+  ],
+  "author": "iamsamyiok",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/iamsamyiok/local-knowledge-graph.git"
+  }
 }

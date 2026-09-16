@@ -9,7 +9,7 @@
 const path = require('path');
 const { DatabaseSync } = require('node:sqlite');
 
-const DB_PATH = path.join(__dirname, '..', 'data', 'kg.db');
+const { DB_PATH } = require('../lib/paths');
 
 function parseArgs(argv) {
   const args = { center: null, depth: null, json: false };

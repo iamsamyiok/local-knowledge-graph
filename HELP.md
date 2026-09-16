@@ -1,6 +1,6 @@
 # 本地知识图谱整合器 · 帮助
 
-把文档与联网信息整理成可导航的 3D 知识图谱。全流程本地运行，图谱数据、图片、API Key 全部保存在本机 `data/` 目录（已排除在代码仓库外）。
+把文档与联网信息整理成可导航的 3D 知识图谱。全流程本地运行，图谱数据、图片、API Key 全部保存在本机数据目录（npm 安装模式在 `~/.local-knowledge-graph/`，Git 克隆模式在项目内 `data/`），代码仓库不包含任何用户数据。
 
 ## 查看当前版本
 
@@ -21,6 +21,14 @@
 
 ## 手动更新（备用方式）
 
+npm 安装模式：
+
+```bash
+npm i -g local-knowledge-graph@latest
+```
+
+Git 克隆模式：
+
 ```bash
 cd 项目目录
 git pull --ff-only origin master
@@ -30,13 +38,32 @@ git pull --ff-only origin master
 
 ## 启动方式
 
+**npm 安装（推荐）**：
+
+```bash
+npm i -g local-knowledge-graph
+kg
+```
+
+数据保存在用户目录 `~/.local-knowledge-graph/`（Windows 在 `C:\Users\你\.local-knowledge-graph`），升级与卸载程序均不影响数据。也可 `npx local-knowledge-graph` 免安装试用。
+
+**脚本启动（Git 克隆模式）**：
+
 | 平台 | 方式 |
 | ---- | ---- |
 | Windows | 双击 `start.bat` |
 | macOS | 双击 `start.command` |
 | Linux / 命令行 | `bash start.sh` 或 `npm start` |
 
-启动后浏览器访问 `http://localhost:3000`。依赖 Node.js >= 22.5；自然语言补全需要全局安装 `opencode` CLI（`npm i -g opencode-ai`），未安装时仅该功能降级，其余功能正常。
+此模式数据存放在项目内 `data/` 目录。启动后浏览器访问 `http://localhost:3000`。依赖 Node.js >= 22.5；自然语言补全需要全局安装 `opencode` CLI（`npm i -g opencode-ai`），未安装时仅该功能降级，其余功能正常。
+
+## API Key 配置（全部在界面上完成）
+
+程序自身零内置密钥，所有需要 key 的能力都在界面上自由配置：
+
+- **语义检索 / 智能提问综述**：检索页签"语义检索配置"填入 API Key（默认硅基流动 BAAI/bge-m3，可换任意 OpenAI 兼容接口的 Base URL 与模型）。Key 仅存本地数据目录的 settings.json，服务端永不回传真实值。不配置则自动退化为关键词检索，其余功能不受影响。
+- **OpenCode（AI 对话建图 / 智能提问编译）**：使用 opencode CLI 自身的认证（`opencode auth login`），应用不经手密钥。未安装或未认证时仅这两个功能降级。
+- 更换数据目录（`kg --data <目录>`）会使用该目录下的独立配置，互不串扰。
 
 ## 功能速览
 
@@ -73,6 +100,8 @@ git pull --ff-only origin master
 优先用「撤销」（可连续）；需要回到更早状态时在"版本"页签回溯到对应保存点。
 
 ## 版本历史摘要
+
+- **v1.5.0**：npm 包化（`npm i -g local-knowledge-graph` + `kg` 一键安装启动）；数据目录迁至用户目录（升级无损）；应用内更新支持 npm 与 git 双模式
 
 - **v1.4.0**：设置与帮助面板内置版本号、检查更新、一键更新；项目目录新增本帮助文档
 - **v1.3.0**：智能关系检索（自然语言提问 → 检索计划 → 关联发现 → 综述）

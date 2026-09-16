@@ -24,9 +24,14 @@ test('compareVersions: 三段语义化比较', () => {
 test('checkSync: 正常返回结构（当前为Git仓库）', () => {
   const r = updater.checkSync();
   assert.equal(r.ok, true);
+  assert.equal(r.mode, 'git');
   assert.equal(r.current_version, require('../package.json').version);
   assert.equal(typeof r.up_to_date, 'boolean');
   assert.ok(r.local_sha === undefined || /^[0-9a-f]{7}$/.test(r.local_sha));
+});
+
+test('updateMode: 开发仓库为git模式', () => {
+  assert.equal(updater.updateMode(), 'git');
 });
 
 test('checkSync: 非Git目录返回ok:false', () => {

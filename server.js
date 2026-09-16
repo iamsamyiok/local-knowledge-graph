@@ -538,6 +538,7 @@ function checkAgent() {
 }
 
 function bootstrap() {
+  require('./lib/paths').ensureLegacyMigration();
   git.ensureRepo();
   git.backupCopy(true); // 启动时强制留一份滚动副本，目录损坏时仍有外部备份可救
   try {
@@ -591,7 +592,7 @@ function scheduleRestart() {
   setTimeout(() => {
     try {
       const { spawn } = require('child_process');
-      const log = fs.openSync(path.join(__dirname, 'data', 'restart.log'), 'a');
+      const log = fs.openSync(path.join(require('./lib/paths').DATA_DIR, 'restart.log'), 'a');
       const child = spawn(process.execPath, [...process.execArgv, path.join(__dirname, 'server.js')], {
         detached: true, stdio: ['ignore', log, log], env: process.env, cwd: __dirname,
       });

@@ -28,7 +28,18 @@
 
 环境要求：Node.js >= 22.5（使用内置 node:sqlite），Windows / macOS / Linux 均可，无需数据库安装。
 
-### 一键启动（推荐）
+### npm 安装（推荐）
+
+```bash
+npm i -g local-knowledge-graph
+kg
+```
+
+一条命令安装，一条命令启动（自动打开浏览器）。数据保存在用户目录 `~/.local-knowledge-graph/`，升级（`kg` 内一键更新或 `npm i -g local-knowledge-graph@latest`）不影响数据。也可以免安装试用：`npx local-knowledge-graph`。
+
+启动参数：`kg --port 3000 --host 127.0.0.1 --data <目录> --no-open`（详见 `kg --help`）。
+
+### 脚本启动（Git 克隆 / 开发模式）
 
 | 平台 | 操作 |
 |------|------|
@@ -36,7 +47,7 @@
 | macOS | 双击 `start.command`（若提示无法打开：右键 → 打开；若提示无执行权限：终端执行一次 `chmod +x start.command start.sh`） |
 | Linux | `./start.sh`（首次可能需 `chmod +x start.sh`） |
 
-脚本自动完成：Node 版本检查 → 首次自动安装依赖（仅 express，几秒）→ 启动服务 → 自动打开浏览器 `http://localhost:3000`。
+脚本自动完成：Node 版本检查 → 首次自动安装依赖（仅 express，几秒）→ 启动服务 → 自动打开浏览器 `http://localhost:3000`。此模式数据存放在项目内 `data/` 目录，应用内"一键更新"走 git 快进拉取。
 
 ### 手动启动
 

@@ -240,9 +240,9 @@
   /* ================= 手机端适配 ================= */
   @media (max-width: 768px) {
     .m-btn { display: inline-block; background: #16233f; }
-    #btn-style { display: none; }
     #btn-inference { display: none; }
-    #style-panel { display: none !important; }
+    /* 主题设置移动端可达：按钮保留，面板收窄为屏幕内浮层 */
+    #style-panel { max-width: calc(100vw - 16px); width: 288px; top: 8px; right: 8px; }
 
     /* 隐藏大标题，所有功能按钮单行排布，最大化画布显示范围 */
     header {

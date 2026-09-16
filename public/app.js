@@ -385,6 +385,16 @@ function animate() {
       m.mesh.scale.setScalar(base * (1.25 + 0.08 * Math.sin(Date.now() / 300)));
     }
   }
+  // 相机飞行（搜索点击聚焦）：目标点跟随节点当前位置，easeInOutQuad插值
+  if (camFly) {
+    camFly.t = Math.min(1, camFly.t + 0.03);
+    const x = camFly.t;
+    const k = x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+    const to = new THREE.Vector3(camFly.nd.pos.x, camFly.nd.pos.y, camFly.nd.pos.z);
+    camera.position.lerpVectors(camFly.fromPos, to.clone().addScaledVector(camFly.dir, camFly.dist), k);
+    controls.target.lerpVectors(camFly.fromTarget, to, k);
+    if (camFly.t >= 1) camFly = null;
+  }
   controls.update();
   renderer.render(scene, camera);
 }
@@ -394,7 +404,7 @@ animate();
 const raycaster = new THREE.Raycaster();
 raycaster.params.Line = { threshold: 3 };
 let downPos = null;
-renderer.domElement.addEventListener('pointerdown', (e) => { downPos = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerdown', (e) => { downPos = { x: e.clientX, y: e.clientY }; camFly = null; });
 renderer.domElement.addEventListener('pointerup', (e) => {
   if (!downPos) return;
   const moved = Math.hypot(e.clientX - downPos.x, e.clientY - downPos.y);
@@ -555,6 +565,26 @@ function exitEgo() {
   rebuildGraph();
 }
 window.exitEgo = exitEgo;
+
+/* 搜索/列表点击聚焦：选中+呼吸高亮+相机平滑飞行；ego视图中无此节点时先退出重建 */
+let camFly = null;
+function focusEntity(id) {
+  if (state.ego && !simNodes.some((n) => n.id === id)) {
+    state.ego = null;
+    updateEgoBar();
+    rebuildGraph();
+  }
+  state.selected = { type: 'entity', id };
+  renderInfoCard();
+  const nd = simNodes.find((n) => n.id === id);
+  if (!nd) return;
+  // 沿当前视线方向推进相机，目标点实时跟随节点（模拟仍在收敛时会同步追踪）
+  const dir = camera.position.clone().sub(controls.target).normalize();
+  camFly = { nd, dir, dist: 110, fromPos: camera.position.clone(), fromTarget: controls.target.clone(), t: 0 };
+  simBudget = Math.max(simBudget, 60);
+  settleCount = 0;
+}
+window.focusEntity = focusEntity;
 
 $('ego-depth').addEventListener('change', () => {
   if (!state.ego) return;
@@ -865,14 +895,50 @@ function renderRelationList() {
   }).join('') || '<div class="sub" style="color:#5c6f92">暂无关系</div>';
 }
 
+/* 日志人话渲染：op_type + snapshot JSON → 可读中文；已删实体名称回退#id */
+const OP_LABELS = {
+  ADD_ENTITY: '新增实体', UPDATE_ENTITY: '更新实体', DELETE_ENTITY: '删除实体',
+  ADD_RELATION: '新增关系', UPDATE_RELATION: '更新关系', DELETE_RELATION: '删除关系', RESTORE: '版本回溯',
+};
+function entName(id) {
+  const m = state.entityMap.get(id);
+  return m ? `「${m.entity.name}」` : `#${id}`;
+}
+function clip(s, n = 28) {
+  s = String(s ?? '');
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+function fmtEntity(e) {
+  return e ? `「${e.name}」(${e.category})` : '';
+}
+function diffFields(before, after) {
+  if (!before || !after) return '';
+  const changed = Object.keys(after).filter((k) => k !== 'id' && String(before[k] ?? '') !== String(after[k] ?? ''));
+  return changed.map((k) => `${k}→${clip(after[k])}`).join('，');
+}
+function formatLog(l) {
+  let s = {};
+  try { s = JSON.parse(l.snapshot); } catch (_) { /* 旧格式快照原样展示 */ }
+  switch (l.op_type) {
+    case 'ADD_ENTITY': return `新增实体 ${fmtEntity(s.entity)}，来源 ${s.entity?.source ?? '—'}`;
+    case 'UPDATE_ENTITY': return `更新实体 ${fmtEntity(s.after)}：${diffFields(s.before, s.after) || '无字段变化'}`;
+    case 'DELETE_ENTITY': return `删除实体 ${fmtEntity(s.entity)}${s.cascaded_relations ? `，级联删除 ${s.cascaded_relations} 条关系` : ''}`;
+    case 'ADD_RELATION': return `新增关系 ${entName(s.relation?.source_id)} —[${s.relation?.name}]→ ${entName(s.relation?.target_id)}（${s.relation?.category ?? '—'}）`;
+    case 'UPDATE_RELATION': return `更新关系 #${s.after?.id ?? '?'} [${s.after?.name ?? '?'}]：${diffFields(s.before, s.after) || '无字段变化'}`;
+    case 'DELETE_RELATION': return `删除关系 ${entName(s.relation?.source_id)} —[${s.relation?.name}]→ ${entName(s.relation?.target_id)}${s.reason ? `（${s.reason}）` : ''}`;
+    case 'RESTORE': return `版本回溯至 ${s.restored_to ?? '?'}，回溯后 实体 ${s.counts?.entities ?? '?'} / 关系 ${s.counts?.relations ?? '?'}`;
+    default: return clip(l.snapshot, 160);
+  }
+}
+
 async function loadLogs() {
   try {
     const logs = await api('/api/logs?limit=200');
     $('log-list').innerHTML = logs.map((l) => `
       <div class="log-item">
-        <div class="l1"><span>#${l.id} ${escapeHtml(l.op_type)}</span><span>${escapeHtml(l.source)}</span></div>
+        <div class="l1"><span>#${l.id} ${OP_LABELS[l.op_type] || escapeHtml(l.op_type)}</span><span>${escapeHtml(l.source)}</span></div>
         <div class="l1"><span style="color:#54617f">${l.created_at}</span></div>
-        <div class="l2">${escapeHtml(l.snapshot.length > 220 ? l.snapshot.slice(0, 220) + '…' : l.snapshot)}</div>
+        <div class="l2">${escapeHtml(formatLog(l))}</div>
       </div>`).join('') || '<div class="sub" style="color:#5c6f92">暂无日志</div>';
   } catch (e) { toast(e.message, true); }
 }
@@ -1160,6 +1226,7 @@ $('fm-savehtml').addEventListener('click', () => {
   const safe = encodeURIComponent(name.trim() || 'kg-viewer.html');
   downloadUrl('/api/export/html?name=' + safe);
   $('file-menu').classList.remove('show');
+  toast('单文件查看器已开始下载：纯静态HTML，内嵌全部图谱数据与图片，发给他人用浏览器打开即可浏览');
 });
 $('fm-rdf').addEventListener('click', () => { window.open('/api/export/rdf', '_blank'); $('file-menu').classList.remove('show'); });
 $('fm-open').addEventListener('click', () => { $('file-menu').classList.remove('show'); $('db-file-input').click(); });
@@ -1172,7 +1239,9 @@ $('db-file-input').addEventListener('change', async () => {
   try {
     const b64 = await readAsB64(f);
     const r = await api('/api/graph/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64 }) });
-    toast(`已打开图谱《${f.name}》：实体 ${r.counts.entities} / 关系 ${r.counts.relations}（原数据备份于 ${r.backup_short || '最新保存点'}）`);
+    let msg = `已打开图谱《${f.name}》：实体 ${r.counts.entities} / 关系 ${r.counts.relations}（原数据备份于 ${r.backup_short || '最新保存点'}）`;
+    if (r.pruned_images > 0) msg += `；${r.pruned_images} 张图片文件未随库迁移，已清理对应绑定`;
+    toast(msg);
     exitEgo();
     state.selected = null;
     await refreshAll();
@@ -1185,6 +1254,7 @@ const HEADER_LABELS = [
   ['btn-savepoint', '打保存点', '存点'],
   ['btn-relayout', '重新布局', '布局'],
   ['btn-resetview', '重置视角', '视角'],
+  ['btn-style', '视图设置', '设置'],
 ];
 function compactHeader(mobile) {
   for (const [id, , short] of HEADER_LABELS) {
@@ -1250,7 +1320,7 @@ function renderSearchResults(r) {
   $('s-mode').textContent = r.mode === 'hybrid' ? '语义+关键词融合' : '仅关键词（未配置key或未建向量）';
   if (!r.results.length) { $('s-results').innerHTML = '<div class="kv" style="margin-top:8px">无匹配结果</div>'; return; }
   $('s-results').innerHTML = r.results.map((x, i) => `
-    <div class="list-item" style="cursor:pointer" onclick="focusEgo(${x.entity.id})">
+    <div class="list-item" style="cursor:pointer" onclick="focusEntity(${x.entity.id})">
       <b>${i + 1}. ${escapeHtml(x.entity.name)}</b>
       <span class="tag" style="color:${ENTITY_STYLE[x.entity.category].css};border-color:${ENTITY_STYLE[x.entity.category].css}55">${x.entity.category}</span>
       <div class="kv">语义 ${x.semantic_score ?? '—'}　关键词 ${x.keyword_score ?? '—'}　RRF ${x.rrf_score}　关联 ${x.hit_relations} 条</div>
@@ -1314,9 +1384,10 @@ $('btn-export').addEventListener('click', () => window.open('/api/export/rdf', '
 $('btn-inference').addEventListener('click', async () => {
   state.showInferred = !state.showInferred;
   $('btn-inference').classList.toggle('active', state.showInferred);
+  localStorage.setItem('kg_inference_v1', state.showInferred ? '1' : '0');
   if (state.showInferred) {
     try { state.inferredData = await api('/api/inference'); }
-    catch (_) { state.showInferred = false; $('btn-inference').classList.remove('active'); return; }
+    catch (_) { state.showInferred = false; $('btn-inference').classList.remove('active'); localStorage.removeItem('kg_inference_v1'); return; }
   }
   rebuildGraph();
 });
@@ -1344,4 +1415,17 @@ $('btn-resetview').addEventListener('click', () => {
   }
   initPolling();
   loadSearchStatus();
+  // 推理开关持久化：上次会话开启时启动即恢复叠加
+  if (localStorage.getItem('kg_inference_v1') === '1') {
+    $('btn-inference').classList.add('active');
+    try {
+      state.inferredData = await api('/api/inference');
+      state.showInferred = true;
+      rebuildGraph();
+    } catch (_) {
+      state.showInferred = false;
+      $('btn-inference').classList.remove('active');
+      localStorage.removeItem('kg_inference_v1');
+    }
+  }
 })();

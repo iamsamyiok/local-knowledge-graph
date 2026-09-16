@@ -258,8 +258,10 @@ api.post('/graph/import', (req, res) => {
   db.reopen();
   const checkAfter = db.integrityCheck();
   if (!checkAfter.ok) { const e = new Error('导入后完整性校验失败: ' + checkAfter.detail); e.status = 500; throw e; }
+  // .db 不携带 uploads/ 资产：剪除指向不存在文件的图片行，避免前端裂图
+  const prunedImages = db.pruneMissingImages();
 
-  res.json({ ok: true, counts: db.counts(), imported: { entities: counts.entities, relations: counts.relations }, backup_short: backup && backup.hash ? backup.hash : null });
+  res.json({ ok: true, counts: db.counts(), imported: { entities: counts.entities, relations: counts.relations }, backup_short: backup && backup.hash ? backup.hash : null, pruned_images: prunedImages.pruned });
 });
 
 // ---------- 另存为图谱网页（单文件只读查看器） ----------
@@ -288,26 +290,34 @@ api.post('/git/restore', (req, res) => {
 });
 
 // ---------- OpenCode自然语言指令 ----------
-api.post('/agent', async (req, res) => {
-  const instruction = req.body && req.body.instruction;
-  const result = await agent.runAgent(instruction);
-  if (!result.ok) return res.status(502).json({ error: result.error });
+// AI任务互斥：OpenCode进程最长5分钟，防止并发请求叠加进程互抢SQLite与内存
+let agentBusy = false;
 
-  let applied = [];
-  let applyError = null;
-  if (result.ops && result.ops.length) {
-    try {
-      applied = db.applyAgentOps(result.ops);
-      // Agent批次写入后自动打保存点，与日志双向绑定
-      const title = `OpenCode: ${String(instruction).slice(0, 60).replace(/\n/g, ' ')}`;
-      let sp = null;
-      try { sp = git.savepoint(title, 'OpenCode'); } catch (e) { sp = { committed: false, message: e.message }; }
-      result.savepoint = sp;
-    } catch (e) {
-      applyError = e.message; // 违规操作被拦截，数据库保持上一个合规版本
+api.post('/agent', async (req, res) => {
+  if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答或文档导入），请等待完成后再试' });
+  const instruction = req.body && req.body.instruction;
+  if (!instruction || !String(instruction).trim()) return res.status(400).json({ error: '指令不能为空' });
+  agentBusy = true;
+  try {
+      const result = await agent.runAgent(instruction);
+      if (!result.ok) return res.status(502).json({ error: result.error });
+
+    let applied = [];
+    let applyError = null;
+    if (result.ops && result.ops.length) {
+      try {
+        applied = db.applyAgentOps(result.ops);
+        // Agent批次写入后自动打保存点，与日志双向绑定
+        const title = `OpenCode: ${String(instruction).slice(0, 60).replace(/\n/g, ' ')}`;
+        let sp = null;
+        try { sp = git.savepoint(title, 'OpenCode'); } catch (e) { sp = { committed: false, message: e.message }; }
+        result.savepoint = sp;
+      } catch (e) {
+        applyError = e.message; // 违规操作被拦截，数据库保持上一个合规版本
+      }
     }
-  }
-  res.json({ reply: result.reply, ops_found: (result.ops || []).length, applied, apply_error: applyError, parse_error: result.parse_error, savepoint: result.savepoint || null, retried: result.retried || false, partial_reply: result.partial_reply || null, session: result.session ? { has_session: true } : null });
+    res.json({ reply: result.reply, ops_found: (result.ops || []).length, applied, apply_error: applyError, parse_error: result.parse_error, savepoint: result.savepoint || null, retried: result.retried || false, partial_reply: result.partial_reply || null, session: result.session ? { has_session: true } : null });
+  } finally { agentBusy = false; }
 });
 
 // ---------- 文档导入：文本/文档 → 三元组 → 融合入库 ----------
@@ -359,86 +369,90 @@ let docProgress = { active: false, stage: 'idle', chunk: 0, chunks: 0, mode: '',
 api.get('/agent/doc/progress', (req, res) => res.json(docProgress));
 
 api.post('/agent/doc', async (req, res) => {
+  if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答或文档导入），请等待完成后再试' });
   const { filename, content_b64, instruction } = req.body || {};
   if (!filename || !content_b64) return res.status(400).json({ error: '必须提供文件名与内容(content_b64)' });
   let buf;
   try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'content_b64不是合法的base64' }); }
   if (!buf.length) return res.status(400).json({ error: '文件内容为空' });
   if (buf.length > MAX_DOC_BYTES) return res.status(400).json({ error: `文件超过${MAX_DOC_BYTES / 1024 / 1024}MB上限，请拆分后导入` });
+  agentBusy = true;
   docProgress = { active: true, stage: 'preparing', chunk: 0, chunks: 0, mode: '', filename: safeName(filename) };
 
-  const name = safeName(filename);
-  const ext = path.extname(name).toLowerCase();
-  const uploadsDir = path.join(git.DATA_DIR, 'uploads');
-  fs.mkdirSync(uploadsDir, { recursive: true });
-  const savedPath = path.join(uploadsDir, `${Date.now()}_${name}`);
-  fs.writeFileSync(savedPath, buf);
+  try {
+    const name = safeName(filename);
+    const ext = path.extname(name).toLowerCase();
+    const uploadsDir = path.join(git.DATA_DIR, 'uploads');
+    fs.mkdirSync(uploadsDir, { recursive: true });
+    const savedPath = path.join(uploadsDir, `${Date.now()}_${name}`);
+    fs.writeFileSync(savedPath, buf);
 
-  const report = { filename: name, mode: '', chunks: 0, chunks_ok: 0, entities_added: 0, relations_added: 0, others: 0, errors: [], reply: '' };
-  const tally = (applied) => {
-    for (const a of applied || []) {
-      if (a.op === 'add_entity') report.entities_added++;
-      else if (a.op === 'add_relation') report.relations_added++;
-      else report.others++;
-    }
-  };
+    const report = { filename: name, mode: '', chunks: 0, chunks_ok: 0, entities_added: 0, relations_added: 0, others: 0, errors: [], reply: '' };
+    const tally = (applied) => {
+      for (const a of applied || []) {
+        if (a.op === 'add_entity') report.entities_added++;
+        else if (a.op === 'add_relation') report.relations_added++;
+        else report.others++;
+      }
+    };
 
-  const isTextLike = TEXT_LIKE_EXT.includes(ext);
-  const doApply = (r) => {
-    if (!r.ok) { report.errors.push(r.error); return r; }
-    if (r.ops && r.ops.length) {
-      try {
-        const applied = db.applyAgentOps(r.ops);
-        tally(applied);
+    const isTextLike = TEXT_LIKE_EXT.includes(ext);
+    const doApply = (r) => {
+      if (!r.ok) { report.errors.push(r.error); return r; }
+      if (r.ops && r.ops.length) {
+        try {
+          const applied = db.applyAgentOps(r.ops);
+          tally(applied);
+          report.chunks_ok++;
+        } catch (e) {
+          report.errors.push(`第${report.chunks_ok + 1}块操作被RDF校验拦截: ${e.message}`);
+        }
+      } else {
         report.chunks_ok++;
-      } catch (e) {
-        report.errors.push(`第${report.chunks_ok + 1}块操作被RDF校验拦截: ${e.message}`);
       }
-    } else {
-      report.chunks_ok++;
+      if (r.reply) report.reply = r.reply;
+      return r;
+    };
+
+    try {
+      if (isTextLike && buf.length > 1500) {
+        // 文本类大文档：后端分块流水线，逐块抽取+融合，图谱摘要随每块刷新实现跨块对齐
+        report.mode = 'chunked';
+        const chunks = splitChunks(buf.toString('utf8'));
+        if (chunks.length > MAX_CHUNKS) {
+          docProgress = { ...docProgress, active: false, stage: 'error' };
+          return res.status(400).json({ error: `文档分块后达${chunks.length}块（上限${MAX_CHUNKS}），请拆分后导入` });
+        }
+        report.chunks = chunks.length;
+        docProgress = { ...docProgress, mode: 'chunked', chunks: chunks.length, stage: 'importing' };
+        for (let i = 0; i < chunks.length; i++) {
+          docProgress = { ...docProgress, chunk: i + 1 };
+          const inst = `${docInstruction(name, i + 1, chunks.length, instruction)}\n【文本块内容】\n<<<\n${chunks[i]}\n>>>`;
+          const r = doApply(await agent.runAgent(inst));
+          if (!r.ok) break; // agent层错误（超时/服务错误）时终止后续块
+        }
+      } else {
+        // 小文本或PDF/Word等二进制文档：整体作为附件交给OpenCode（kg-triples技能）
+        report.mode = 'attached';
+        report.chunks = 1;
+        docProgress = { ...docProgress, mode: 'attached', chunks: 1, chunk: 1, stage: 'importing' };
+        const inst = docInstruction(name, 1, 1, instruction) + ' 文档已作为附件挂载，请先读取再抽取。';
+        doApply(await agent.runAgent(inst, [savedPath]));
+      }
+      docProgress = { ...docProgress, active: true, stage: 'savepoint' };
+    } finally {
+      try { fs.unlinkSync(savedPath); } catch (_) { /* 保留亦可 */ }
     }
-    if (r.reply) report.reply = r.reply;
-    return r;
-  };
 
-  try {
-    if (isTextLike && buf.length > 1500) {
-      // 文本类大文档：后端分块流水线，逐块抽取+融合，图谱摘要随每块刷新实现跨块对齐
-      report.mode = 'chunked';
-      const chunks = splitChunks(buf.toString('utf8'));
-      if (chunks.length > MAX_CHUNKS) {
-        docProgress = { ...docProgress, active: false, stage: 'error' };
-        return res.status(400).json({ error: `文档分块后达${chunks.length}块（上限${MAX_CHUNKS}），请拆分后导入` });
-      }
-      report.chunks = chunks.length;
-      docProgress = { ...docProgress, mode: 'chunked', chunks: chunks.length, stage: 'importing' };
-      for (let i = 0; i < chunks.length; i++) {
-        docProgress = { ...docProgress, chunk: i + 1 };
-        const inst = `${docInstruction(name, i + 1, chunks.length, instruction)}\n【文本块内容】\n<<<\n${chunks[i]}\n>>>`;
-        const r = doApply(await agent.runAgent(inst));
-        if (!r.ok) break; // agent层错误（超时/服务错误）时终止后续块
-      }
-    } else {
-      // 小文本或PDF/Word等二进制文档：整体作为附件交给OpenCode（kg-triples技能）
-      report.mode = 'attached';
-      report.chunks = 1;
-      docProgress = { ...docProgress, mode: 'attached', chunks: 1, chunk: 1, stage: 'importing' };
-      const inst = docInstruction(name, 1, 1, instruction) + ' 文档已作为附件挂载，请先读取再抽取。';
-      doApply(await agent.runAgent(inst, [savedPath]));
-    }
-    docProgress = { ...docProgress, active: true, stage: 'savepoint' };
-  } finally {
-    try { fs.unlinkSync(savedPath); } catch (_) { /* 保留亦可 */ }
-  }
+    // 汇总保存点（含导入统计，与日志双向绑定）
+    let savepoint = null;
+    try {
+      savepoint = git.savepoint(`文档导入: ${name}（实体+${report.entities_added} 关系+${report.relations_added}）`, 'OpenCode');
+    } catch (e) { savepoint = { committed: false, message: e.message }; }
+    docProgress = { active: false, stage: report.errors.length && !report.chunks_ok ? 'error' : 'done', chunk: docProgress.chunk, chunks: docProgress.chunks, mode: report.mode, filename: name };
 
-  // 汇总保存点（含导入统计，与日志双向绑定）
-  let savepoint = null;
-  try {
-    savepoint = git.savepoint(`文档导入: ${name}（实体+${report.entities_added} 关系+${report.relations_added}）`, 'OpenCode');
-  } catch (e) { savepoint = { committed: false, message: e.message }; }
-  docProgress = { active: false, stage: report.errors.length && !report.chunks_ok ? 'error' : 'done', chunk: docProgress.chunk, chunks: docProgress.chunks, mode: report.mode, filename: name };
-
-  res.json({ report, applied_total: report.entities_added + report.relations_added + report.others, savepoint, retried: false });
+    res.json({ report, applied_total: report.entities_added + report.relations_added + report.others, savepoint, retried: false });
+  } finally { agentBusy = false; }
 });
 
 app.use('/api', api);

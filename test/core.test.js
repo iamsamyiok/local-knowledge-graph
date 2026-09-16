@@ -175,3 +175,42 @@ test('rdf/viewer: 导出包含实体与转义', () => {
   assert.ok(html.includes('const GRAPH ='));
   assert.ok(html.includes('THREE'), 'three.js应被内联');
 });
+
+/* ---------- 向量独立库 ---------- */
+test('vectors: 独立于主库读写与孤儿清理', () => {
+  const vectors = require('../lib/vectors');
+  const expectedPath = process.env.KG_VDB_PATH || path.join(TMP, 'vectors.db');
+  vectors.open();
+  vectors.upsert(101, '文本甲', [0.1, 0.2]);
+  vectors.upsert(102, '文本乙', [0.3]);
+  vectors.upsert(102, '文本乙改', [0.4, 0.5]); // upsert覆盖
+  assert.equal(vectors.count(), 2);
+  assert.equal(vectors.get(102).text, '文本乙改');
+  assert.equal(vectors.all().length, 2);
+  assert.equal(vectors.pruneOrphans([102]), 1); // 101成孤儿
+  assert.equal(vectors.count(), 1);
+  vectors.close();
+  assert.ok(fs.existsSync(expectedPath), '向量库应独立存放于 ' + expectedPath);
+  // 主库中不应再有entity_embeddings表
+  const { DatabaseSync } = require('node:sqlite');
+  const d = new DatabaseSync(process.env.KG_DB_PATH, { readOnly: true });
+  const names = d.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map((r) => r.name);
+  d.close();
+  assert.equal(names.includes('entity_embeddings'), false);
+});
+
+/* ---------- 悬空图片行剪除 ---------- */
+test('db: pruneMissingImages剔除文件缺失的图片行', () => {
+  const e = db.addEntity({ name: '图测实体', category: '抽象实体' }, '手工');
+  const realFile = path.join(TMP, 'uploads');
+  fs.mkdirSync(realFile, { recursive: true });
+  fs.writeFileSync(path.join(realFile, 'real.png'), 'x');
+  db.addEntityImage(e.id, { filename: 'real.png', stored_path: 'uploads/real.png' });
+  db.addEntityImage(e.id, { filename: 'ghost.png', stored_path: 'uploads/ghost.png' });
+  const r = db.pruneMissingImages();
+  assert.equal(r.pruned, 1);
+  assert.deepEqual(r.paths, ['uploads/ghost.png']);
+  const left = db.listEntityImages(e.id);
+  assert.equal(left.length, 1);
+  assert.equal(left[0].stored_path, 'uploads/real.png');
+});

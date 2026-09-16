@@ -1439,13 +1439,14 @@ async function doUpdateApply() {
   renderUpdState();
 }
 
-function pollAfterUpdate(oldVer) {
+function pollAfterUpdate(oldVer, tries = 0) {
   setTimeout(async () => {
     try {
       const v = await api('/api/version');
-      if (v.version !== oldVer) { location.reload(); return; }
+      if (v.version !== oldVer || tries >= 15) { location.reload(); return; }
     } catch (_) { /* 重启中，继续等 */ }
-    pollAfterUpdate(oldVer);
+    if (tries >= 25) { location.reload(); return; } // 服务长时间无响应也强制刷新
+    pollAfterUpdate(oldVer, tries + 1);
   }, 1200);
 }
 

@@ -98,16 +98,6 @@
 
   #canvas-wrap { flex: 1; position: relative; min-width: 0; background: radial-gradient(ellipse at center, #0d1424 0%, #070a12 100%); }
   #canvas-wrap canvas { display: block; touch-action: none; }
-  /* 关系标签层：屏幕空间定位，防重叠 */
-  #link-labels { position: absolute; inset: 0; overflow: hidden; pointer-events: none; }
-  .rel-label {
-    position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
-    font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 9px; white-space: nowrap;
-    background: rgba(9,13,24,.78); border: 1px solid transparent; user-select: none;
-    will-change: transform; text-shadow: none;
-  }
-  .rel-label:hover { filter: brightness(1.25); }
-  html[data-theme="light"] .rel-label { background: rgba(255,255,255,.86); }
   .legend {
     position: absolute; left: 12px; bottom: 12px; background: rgba(13,20,36,.85);
     border: 1px solid #1e2a44; border-radius: 8px; padding: 9px 12px; font-size: 11px; color: #a9bbd8;

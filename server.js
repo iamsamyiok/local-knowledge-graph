@@ -138,6 +138,43 @@ api.get('/similar/:id', async (req, res) => {
   } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
+// ---------- 文档批量入图 ----------
+const ingest = require('./lib/ingest');
+ingest.loadPersisted();
+
+api.post('/ingest', async (req, res) => {
+  if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答、导入或智能检索），请稍后再试' });
+  const { filename, content_b64, auto_commit } = req.body || {};
+  if (!filename || !content_b64) return res.status(400).json({ error: 'filename 与 content_b64 必填' });
+  let buf;
+  try { buf = Buffer.from(content_b64, 'base64'); } catch (_) { return res.status(400).json({ error: 'base64解码失败' }); }
+  agentBusy = true;
+  try {
+    res.json(await ingest.createTask(String(filename), buf, {
+      autoCommit: auto_commit === true || auto_commit === 1 || auto_commit === '1',
+      onSettled: () => { agentBusy = false; },
+    }));
+  } catch (e) {
+    agentBusy = false;
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+api.get('/ingest/tasks', (req, res) => res.json(ingest.listTasks()));
+api.get('/ingest/:id', (req, res) => {
+  const t = ingest.getTask(req.params.id);
+  if (!t) return res.status(404).json({ error: '任务不存在' });
+  res.json(t);
+});
+api.post('/ingest/:id/commit', (req, res) => {
+  try { res.json(ingest.commitTask(req.params.id, (req.body || {}).selected || null, '手工')); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+api.delete('/ingest/:id', (req, res) => {
+  try { res.json(ingest.deleteTask(req.params.id)); }
+  catch (e) { res.status(e.status || 500).json({ error: e.message }); }
+});
+
 api.post('/undo', (req, res) => {
   try { res.json({ ok: true, ...db.undoLast('手工'), counts: db.counts(), version: db.getVersion() }); }
   catch (e) { res.status(e.status || 500).json({ error: e.message }); }

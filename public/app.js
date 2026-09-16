@@ -17,6 +17,8 @@ const state = {
   confFilter: '',          // 关系置信度过滤：''=全部 | 确证 | 推测 | 存疑
   pathHi: null,            // 画布路径高亮 { nodes:Set, rels:Set }
   lastAsk: null,           // 最近一次智能提问响应（证据路径高亮用）
+  ingViewId: null,         // 文档入图：当前审核任务id
+  ingSel: null,            // 文档入图：审核勾选状态
 };
 
 // 置信度三档的展示色
@@ -1326,6 +1328,130 @@ async function askPath(fromId, fromName) {
 window.askPath = askPath;
 $('path-close').addEventListener('click', () => { $('path-panel').style.display = 'none'; clearCanvasHi(); });
 
+/* ================= 文档批量入图 ================= */
+async function loadIngestTasks() {
+  try {
+    const ts = await api('/api/ingest/tasks');
+    if (state.ingViewId) {
+      const t = ts.find((x) => x.id === state.ingViewId);
+      if (t && (t.status === 'extracting' || t.status === 'parsing')) {
+        $('ing-tasks').innerHTML = `<div class="kv">任务 ${escapeHtml(t.display_name)} 抽取中…（${t.chunks_total || '?'} 片段）</div>`;
+        return;
+      }
+      if (t) { ingView(t.id); return; }
+      state.ingViewId = null;
+    }
+    $('ing-tasks').innerHTML = ts.map((t) => {
+      const st = t.status === 'review' ? '<span style="color:#7ee787">待审核</span>'
+        : t.status === 'committed' ? '<span style="color:#7fd1ff">已入库</span>'
+        : t.status === 'failed' ? `<span style="color:#f0883e">失败：${escapeHtml(t.error || '未知')}</span>`
+        : t.status === 'interrupted' ? '<span style="color:#f0883e">已中断</span>'
+        : '<span style="color:#e0a768">抽取中…</span>';
+      const acts = [];
+      if (t.status === 'review') acts.push(`<button onclick="ingView('${t.id}')">审核</button>`);
+      if (t.status === 'committed') acts.push(`<span class="tag">实体+${t.entity_count} 关系+${t.relation_count}</span>`);
+      if (t.status !== 'extracting' && t.status !== 'parsing') acts.push(`<button class="danger" onclick="ingDelete('${t.id}')">删</button>`);
+      return `<div class="list-item"><div class="main"><div class="name">${escapeHtml(t.display_name)}</div>
+        <div class="sub">${st} · 实体${t.entity_count}/关系${t.relation_count}${t.failed_chunks ? ` · 失败片段${t.failed_chunks}` : ''}</div></div>${acts.join('')}</div>`;
+    }).join('') || '<div class="sub" style="color:#5c6f92">暂无任务</div>';
+  } catch (_) { /* 服务暂不可用时静默 */ }
+}
+
+async function ingView(id) {
+  state.ingViewId = id;
+  const t = await api('/api/ingest/' + id);
+  if (t.status !== 'review') { state.ingViewId = null; loadIngestTasks(); return; }
+  state.ingSel = {
+    entities: new Set(t.candidates.entities.filter((c) => c.selected && !c.dupe_of_candidate).map((c) => c.name)),
+    relations: new Set(t.candidates.relations.filter((r) => r.selected && !r.unresolved).map((r) => r.from + '|' + r.name + '|' + r.to)),
+  };
+  const catCss = (c) => (ENTITY_STYLE[c] ? ENTITY_STYLE[c].css : '#ccc');
+  const entRows = t.candidates.entities.map((c) => {
+    if (c.dupe_of_candidate) return `<div class="kv" style="color:#5c6f92">· ${escapeHtml(c.name)}（候选内部重复，跳过）</div>`;
+    const on = state.ingSel.entities.has(c.name);
+    const match = c.existing_id !== null && c.existing_id !== undefined ? `<span class="tag" style="color:#7ee787;border-color:#7ee78755">并入已有#${c.existing_id}</span>` : '<span class="tag">新建</span>';
+    return `<label class="list-item" style="cursor:pointer"><input type="checkbox" ${on ? 'checked' : ''} onchange="ingToggle('e','${escapeHtml(c.name).replace(/'/g, "\\'")}',this.checked)">
+      <div class="main"><div class="name">${escapeHtml(c.name)}<span class="tag" style="color:${catCss(c.category)};border-color:${catCss(c.category)}55">${c.category}</span>${match}</div>
+      <div class="sub">${Object.keys(c.attributes || {}).length}属性${c.aliases.length ? ' · 别名:' + escapeHtml(c.aliases.join('/')) : ''}</div></div></label>`;
+  }).join('');
+  const relRows = t.candidates.relations.map((r) => {
+    const key = r.from + '|' + r.name + '|' + r.to;
+    if (r.unresolved) return `<div class="kv" style="color:#5c6f92">· ${escapeHtml(r.from)} —${escapeHtml(r.name)}→ ${escapeHtml(r.to)}（端点缺失，跳过）</div>`;
+    const on = state.ingSel.relations.has(key);
+    return `<label class="list-item" style="cursor:pointer"><input type="checkbox" ${on ? 'checked' : ''} onchange="ingToggle('r','${escapeHtml(key).replace(/'/g, "\\'")}',this.checked)">
+      <div class="main"><div class="name">${escapeHtml(r.from)} —${escapeHtml(r.name)}→ ${escapeHtml(r.to)}<span class="tag" style="color:${CONF_STYLE[r.confidence]};border-color:${CONF_STYLE[r.confidence]}66">${r.confidence}</span></div>
+      <div class="sub">${r.category} · ${escapeHtml(r.source_ref || '')}</div></div></label>`;
+  }).join('');
+  $('ing-tasks').innerHTML = `
+    <div class="kv"><b>审核：${escapeHtml(t.display_name)}</b>（${t.chunks_total}片段${t.failed_chunks.length ? '，失败' + t.failed_chunks.length : ''}）</div>
+    <div class="ask-sec">实体候选（${t.candidates.entities.length}）</div>${entRows || '<div class="kv">无</div>'}
+    <div class="ask-sec">关系候选（${t.candidates.relations.length}）</div>${relRows || '<div class="kv">无</div>'}
+    <div class="row" style="margin-top:8px">
+      <button class="primary" onclick="ingCommit('${t.id}')">确认入库（先打保存点）</button>
+      <button class="ghost" onclick="ingBack()">返回</button>
+    </div>`;
+}
+function ingToggle(kind, key, on) {
+  if (!state.ingSel) return;
+  const set = kind === 'e' ? state.ingSel.entities : state.ingSel.relations;
+  if (on) set.add(key); else set.delete(key);
+}
+function ingBack() { state.ingViewId = null; loadIngestTasks(); }
+async function ingCommit(id) {
+  if (!state.ingSel) return;
+  try {
+    const r = await api(`/api/ingest/${id}/commit`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ selected: { entities: [...state.ingSel.entities], relations: [...state.ingSel.relations] } }),
+    });
+    toast(`已入库：实体+${r.entities_added} 关系+${r.relations_added}${r.relations_skipped ? '（跳过' + r.relations_skipped + '）' : ''}，保存点已创建`);
+    state.ingViewId = null;
+    loadIngestTasks();
+    await refreshAll();
+  } catch (e) { toast(e.message, true); }
+}
+async function ingDelete(id) {
+  if (!confirm('删除该任务记录？（已入库数据不受影响）')) return;
+  try { await api('/api/ingest/' + id, { method: 'DELETE' }); loadIngestTasks(); } catch (e) { toast(e.message, true); }
+}
+$('ing-btn').addEventListener('click', () => $('ing-file').click());
+$('ing-auto').checked = localStorage.getItem('ing_auto_commit') === '1';
+$('ing-auto').addEventListener('change', () => { localStorage.setItem('ing_auto_commit', $('ing-auto').checked ? '1' : '0'); });
+$('ing-file').addEventListener('change', async () => {
+  const f = $('ing-file').files[0];
+  if (!f) return;
+  $('ing-file').value = '';
+  if (f.size > 10 * 1024 * 1024) return toast('文件超过10MB上限', true);
+  $('ing-status').textContent = '上传中…';
+  try {
+    const b64 = await new Promise((res, rej) => {
+      const rd = new FileReader();
+      rd.onload = () => res(String(rd.result).split(',')[1]);
+      rd.onerror = () => rej(new Error('读取失败'));
+      rd.readAsDataURL(f);
+    });
+    const autoCommit = $('ing-auto').checked;
+    const r = await api('/api/ingest', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: f.name, content_b64: b64, auto_commit: autoCommit }) });
+    $('ing-status').textContent = `任务已创建（${r.id}），抽取中…`;
+    state.ingViewId = null;
+    const poll = setInterval(async () => {
+      const t = await api('/api/ingest/' + r.id).catch(() => null);
+      if (!t) { clearInterval(poll); return; }
+      if (t.status === 'review') { clearInterval(poll); if (autoCommit) { $('ing-status').textContent = '自动入库中…'; try { await api('/api/ingest/' + r.id + '/commit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) }); $('ing-status').textContent = '已自动入库'; await refreshAll(); } catch (e) { toast(e.message, true); } loadIngestTasks(); } else { $('ing-status').textContent = '抽取完成，请审核'; loadIngestTasks(); } }
+      else if (t.status === 'failed') { clearInterval(poll); $('ing-status').textContent = '失败：' + (t.error || ''); loadIngestTasks(); }
+      else if (t.status === 'committed') { clearInterval(poll); $('ing-status').textContent = '已直接入库'; loadIngestTasks(); await refreshAll(); }
+    }, 3000);
+  } catch (e) {
+    $('ing-status').textContent = '';
+    toast(e.message, true);
+  }
+});
+window.ingView = ingView;
+window.ingToggle = ingToggle;
+window.ingCommit = ingCommit;
+window.ingDelete = ingDelete;
+window.ingBack = ingBack;
+
 /* ================= OpenCode 对话 ================= */
 function appendMsg(role, text, chips, chipWarn) {
   const div = document.createElement('div');
@@ -1766,6 +1892,7 @@ async function refreshAll(rebuild = true) {
     updateEgoBar();
   }
   $('stat-badge').textContent = `实体 ${meta.counts.entities} / 关系 ${meta.counts.relations} / 日志 ${meta.counts.logs}`;
+  loadIngestTasks();
   const badge = $('agent-badge');
   if (meta.agent_available) { badge.textContent = 'OpenCode 已就绪'; badge.className = 'badge ok'; }
   else { badge.textContent = 'OpenCode 未安装'; badge.className = 'badge off'; }

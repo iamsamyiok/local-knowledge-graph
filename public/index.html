@@ -119,6 +119,19 @@
           <div class="row"><button class="primary" id="c-run">执行</button><span id="c-hint" style="font-size:11px;color:#8fa3c0;align-self:center">支持 contains / = 与 类型:互动|归属</span></div>
           <div id="c-results"></div>
         </div>
+        <div class="card">
+          <h3>文档批量入图（md / txt / pdf）</h3>
+          <div class="row" style="gap:12px">
+            <button class="primary" id="ing-btn">选择文档</button>
+            <label style="display:flex;align-items:center;gap:4px;font-size:12px;cursor:pointer">
+              <input type="checkbox" id="ing-auto" style="width:auto"> 跳过审核直接入库
+            </label>
+            <span id="ing-status" style="font-size:11px;color:#8fa3c0;align-self:center"></span>
+          </div>
+          <div id="ing-tasks"></div>
+          <div class="hint-text">LLM逐片抽取候选三元组 → 审核勾选 → 确认入库（先自动打保存点）。新实体来源标记"文档"，关系自带来源引用"《文档》片段n"。勾选"跳过审核"后抽取完成即自动全量入库。</div>
+          <input type="file" id="ing-file" accept=".md,.markdown,.txt,.pdf" style="display:none">
+        </div>
       </div>
 
       <div class="tabbody" id="tab-log">

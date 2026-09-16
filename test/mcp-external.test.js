@@ -21,6 +21,7 @@ db.open();
 const core = createCore({ readonly: false, source: 'MCP' });
 const coreRO = createCore({ readonly: true, source: 'MCP' });
 const VERSION = 'test';
+const CORE_TOOLS = require('../mcp/core').TOOLS;
 
 function rpc(core2, method, params, id = 1) {
   return Promise.resolve(handleRpc(core2, { jsonrpc: '2.0', id, method, params }, VERSION));
@@ -32,11 +33,12 @@ test('MCP initialize 握手', async () => {
   assert.equal(r.result.serverInfo.name, 'local-knowledge-graph');
 });
 
-test('tools/list 包含全部12个工具', async () => {
+test('tools/list 包含全部13个工具', async () => {
   const r = await rpc(core, 'tools/list', {});
   const names = r.result.tools.map((t) => t.name);
-  for (const n of ['kg_stats', 'kg_apply_ops', 'kg_path', 'kg_digest', 'kg_search', 'kg_cypher']) assert.ok(names.includes(n), `缺少 ${n}`);
-  assert.equal(names.length, 12);
+  for (const n of ['kg_stats', 'kg_apply_ops', 'kg_path', 'kg_digest', 'kg_search', 'kg_cypher', 'kg_reset']) assert.ok(names.includes(n), `缺少 ${n}`);
+  assert.equal(names.length, 13);
+  assert.equal(CORE_TOOLS.length, 13);
 });
 
 test('notification（无id）返回 null', async () => {
@@ -108,4 +110,66 @@ test('批量 JSON-RPC：notification 不产生响应条目', async () => {
   const b = handleRpc(core, { jsonrpc: '2.0', method: 'notifications/initialized' }, VERSION);
   assert.equal(a.id, 7);
   assert.equal(b, null);
+});
+
+test('add_relation 按名称引用（主名与别名）', async () => {
+  const add = await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_entity', name: '名称引用甲', category: '抽象实体', ref: 'jia' },
+    { op: 'add_entity', name: '名称引用乙', category: '抽象实体', aliases: ['乙的别名'] },
+  ] } });
+  assert.equal(JSON.parse(add.result.content[0].text).applied_count, 2);
+
+  // 跨调用：主名引用 + 别名引用
+  const rel = await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_relation', source_name: '名称引用甲', target_name: '乙的别名', name: '按名称连边', category: '互动', confidence: '推测', evidence_ref: '《测试来源》' },
+  ] } });
+  const rr = JSON.parse(rel.result.content[0].text);
+  assert.equal(rr.applied_count, 1);
+  const rid = rr.applied[0].id;
+  const row = db.getRelation(rid);
+  assert.equal(row.confidence, '推测');
+  assert.equal(row.source_ref, '《测试来源》');
+});
+
+test('名称引用重名时返回候选', async () => {
+  await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_entity', name: '同名者', category: '物理实体' },
+    { op: 'add_entity', name: '同名者', category: '抽象实体' },
+  ] } });
+  const rel = await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_relation', source_name: '同名者', target_name: '名称引用甲', name: '测试', category: '互动' },
+  ] } });
+  assert.equal(rel.result.isError, true);
+  assert.match(rel.result.content[0].text, /候选/);
+});
+
+test('批量失败错误定位到第N条', async () => {
+  const r = await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_entity', name: '正常实体', category: '抽象实体' },
+    { op: 'add_entity', name: '', category: '抽象实体' },
+  ] } });
+  assert.equal(r.result.isError, true);
+  assert.match(r.result.content[0].text, /第2条操作/);
+});
+
+test('kg_get_entity 返回附带别名', async () => {
+  await rpc(core, 'tools/call', { name: 'kg_apply_ops', arguments: { ops: [
+    { op: 'add_entity', name: '带别名的实体', category: '物理实体', aliases: ['别名一号'] },
+  ] } });
+  const r = await rpc(core, 'tools/call', { name: 'kg_get_entity', arguments: { name: '带别名的实体' } });
+  const p = JSON.parse(r.result.content[0].text);
+  assert.deepEqual(p.entity.aliases, ['别名一号']);
+});
+
+test('kg_reset 需要 confirm 且可清空', async () => {
+  const no = await rpc(core, 'tools/call', { name: 'kg_reset', arguments: {} });
+  assert.equal(no.result.isError, true);
+  const ro = await rpc(coreRO, 'tools/call', { name: 'kg_reset', arguments: { confirm: true } });
+  assert.equal(ro.result.isError, true);
+  const before = db.counts().entities;
+  const yes = await rpc(core, 'tools/call', { name: 'kg_reset', arguments: { confirm: true } });
+  const r = JSON.parse(yes.result.content[0].text);
+  assert.equal(r.deleted_entities, before);
+  assert.equal(db.counts().entities, 0);
+  assert.equal(db.counts().relations, 0);
 });

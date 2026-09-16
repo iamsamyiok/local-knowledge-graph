@@ -32,7 +32,7 @@ const TOOLS = [
   },
   {
     name: 'kg_get_entity',
-    description: '按id或名称获取单个实体详情（含其全部关系）',
+    description: '按id或名称获取单个实体详情（含其全部关系与别名）',
     inputSchema: {
       type: 'object',
       properties: { id: { type: 'number' }, name: { type: 'string' } },
@@ -115,11 +115,20 @@ const TOOLS = [
   },
   {
     name: 'kg_apply_ops',
-    description: '写入图谱操作（kg-ops协议JSON数组）：add_entity/add_relation/update_entity/update_relation/delete_entity/delete_relation。所有写入均记入operation_logs并自动git保存点',
+    description: '写入图谱操作（kg-ops协议JSON数组）：add_entity/add_relation/update_entity/update_relation/delete_entity/delete_relation。add_relation 支持按名称引用（source_name/target_name，含别名，重名时返回候选要求改用id）；实体间同批引用可用 ref 占位符（add_entity 传 ref，add_relation 传 source_ref/target_ref，仅同一次调用内有效）；关系可带 confidence（确证/推测/存疑）与 evidence_ref（来源引用文本）。add_entity 支持 aliases 数组。所有写入均记入operation_logs并自动git保存点',
     inputSchema: {
       type: 'object',
       properties: { ops: { type: 'array', items: { type: 'object' } } },
       required: ['ops'],
+    },
+  },
+  {
+    name: 'kg_reset',
+    description: '清空图谱全部实体与关系（级联删除，自动保存点）。仅用于重建场景，必须显式传 confirm:true 才会执行',
+    inputSchema: {
+      type: 'object',
+      properties: { confirm: { type: 'boolean', description: '必须为true才执行清空' } },
+      required: ['confirm'],
     },
   },
 ];
@@ -133,7 +142,17 @@ function createCore({ readonly = false, source = 'MCP' } = {}) {
       throw new Error(`实体id "${key}" 不存在`);
     }
     const hits = ents.filter((e) => e.name === key);
-    if (hits.length === 0) throw new Error(`实体 "${key}" 不存在`);
+    if (hits.length === 0) {
+      const aliasMap = db.aliasMap();
+      const aliasHits = ents.filter((e) => (aliasMap[e.id] || []).some((a) => a === key));
+      if (aliasHits.length === 1) return { id: aliasHits[0].id };
+      if (aliasHits.length > 1) {
+        const e = new Error(`别名 "${key}" 对应${aliasHits.length}个实体，请改用id`);
+        e.candidates = aliasHits.map((h) => ({ id: h.id, name: h.name, category: h.category }));
+        throw e;
+      }
+      throw new Error(`实体 "${key}" 不存在`);
+    }
     if (hits.length > 1) {
       const e = new Error(`实体名 "${key}" 存在${hits.length}个候选，请改用id`);
       e.candidates = hits.map((h) => ({ id: h.id, name: h.name, category: h.category }));
@@ -141,6 +160,10 @@ function createCore({ readonly = false, source = 'MCP' } = {}) {
     }
     return { id: hits[0].id };
   }
+
+  // add_relation 的名称引用解析已下沉到 db.applyAgentOps（事务内可见同批新建实体）
+
+  const aliasById = () => db.aliasMap();
 
   const HANDLERS = {
     kg_stats: async () => {
@@ -155,7 +178,9 @@ function createCore({ readonly = false, source = 'MCP' } = {}) {
       const total = ents.length;
       const limit = Math.max(1, Math.min(Number(args.limit) || 100, 500));
       const offset = Math.max(0, Number(args.offset) || 0);
-      return { total, count: Math.min(limit, total - offset), offset, entities: ents.slice(offset, offset + limit) };
+      const amap = aliasById();
+      const page = ents.slice(offset, offset + limit).map((e) => ({ ...e, aliases: amap[e.id] || [] }));
+      return { total, count: Math.min(limit, total - offset), offset, entities: page };
     },
     kg_get_entity: async (args) => {
       let e = null;
@@ -167,7 +192,7 @@ function createCore({ readonly = false, source = 'MCP' } = {}) {
       }
       if (!e) throw new Error('实体不存在（请提供id或name）');
       const rels = db.listRelations().filter((r) => r.source_id === e.id || r.target_id === e.id);
-      return { entity: e, relations: rels };
+      return { entity: { ...e, aliases: aliasById()[e.id] || [] }, relations: rels };
     },
     kg_get_graph: async (args) => {
       const g = db.getGraph();
@@ -218,6 +243,15 @@ function createCore({ readonly = false, source = 'MCP' } = {}) {
       const applied = db.applyAgentOps(args.ops);
       try { git.savepoint(`${source}写入: ${applied.length} 项操作`, source); } catch (_) { /* 数据目录无git时忽略 */ }
       return { applied_count: applied.length, applied };
+    },
+    kg_reset: async (args) => {
+      if (readonly) throw new Error('MCP运行于只读模式，清空被拒绝（可在应用设置中关闭只读）');
+      if (args.confirm !== true) throw new Error('清空图谱是危险操作，必须显式传 confirm:true 执行');
+      const ids = db.listEntities().map((e) => e.id);
+      if (!ids.length) return { deleted_entities: 0, message: '图谱已为空' };
+      db.applyAgentOps(ids.map((id) => ({ op: 'delete_entity', id })));
+      try { git.savepoint(`${source}清空: 删除${ids.length}个实体`, source); } catch (_) { /* 忽略 */ }
+      return { deleted_entities: ids.length, message: '图谱已清空，可通过保存点回溯恢复' };
     },
   };
 

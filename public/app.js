@@ -143,6 +143,7 @@ const simLinks = [];   // { id, a, b, line, label, dashed }
 let simBudget = 0;
 let simFrame = 0;    // 隔帧斥力计数
 let settleCount = 0; // 连续安静帧数，达45帧判定布局收敛并休眠模拟
+let camFly = null; // 相机飞行动画状态（搜索点击聚焦；声明须在animate()首调之前）
 
 function resize() {
   const w = wrap.clientWidth, h = wrap.clientHeight;
@@ -567,7 +568,6 @@ function exitEgo() {
 window.exitEgo = exitEgo;
 
 /* 搜索/列表点击聚焦：选中+呼吸高亮+相机平滑飞行；ego视图中无此节点时先退出重建 */
-let camFly = null;
 function focusEntity(id) {
   if (state.ego && !simNodes.some((n) => n.id === id)) {
     state.ego = null;

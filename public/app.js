@@ -2267,9 +2267,16 @@ let mcpState = { enabled: false, readonly: false, token: '', endpoint: '/mcp' };
 
 function mcpSnippets() {
   const origin = location.origin;
-  const http = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url: `${origin}/mcp?token=${mcpState.token}` } } }, null, 2);
-  const desktop = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url: `${origin}/mcp`, headers: { Authorization: `Bearer ${mcpState.token}` } } } }, null, 2);
+  const url = `${origin}/mcp`;
+  const bearer = `Authorization: Bearer ${mcpState.token}`;
+  // 一键连接：令牌已内含，复制粘贴到终端即可
+  const quick = `npx -y mcp-remote ${url} --header "${bearer}"`;
+  const claudeCode = `claude mcp add --transport http local-kg ${url} --header "${bearer}"`;
+  const http = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url: `${url}?token=${mcpState.token}` } } }, null, 2);
+  const desktop = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { url, headers: { Authorization: `Bearer ${mcpState.token}` } } } }, null, 2);
   const stdio = JSON.stringify({ mcpServers: { 'local-knowledge-graph': { command: 'npx', args: ['-y', 'local-knowledge-graph', '--mcp'] } } }, null, 2);
+  $('mcp-snippet-quick').textContent = quick;
+  $('mcp-snippet-claude-code').textContent = claudeCode;
   $('mcp-snippet-http').textContent = http;
   $('mcp-snippet-desktop').textContent = desktop;
   $('mcp-snippet-stdio').textContent = stdio;
@@ -2312,6 +2319,8 @@ $('mcp-regen').addEventListener('click', async () => {
   } catch (e) { toast(e.message, true); }
 });
 $('mcp-copy-token').addEventListener('click', () => copyText(mcpState.token));
+$('mcp-copy-quick').addEventListener('click', () => copyText($('mcp-snippet-quick').textContent));
+$('mcp-copy-claude').addEventListener('click', () => copyText($('mcp-snippet-claude-code').textContent));
 $('mcp-copy-http').addEventListener('click', () => copyText($('mcp-snippet-http').textContent));
 $('mcp-copy-desktop').addEventListener('click', () => copyText($('mcp-snippet-desktop').textContent));
 $('mcp-copy-stdio').addEventListener('click', () => copyText($('mcp-snippet-stdio').textContent));

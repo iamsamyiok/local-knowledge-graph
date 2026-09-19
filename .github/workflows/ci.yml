@@ -19,6 +19,7 @@ jobs:
         run: |
           node --check server.js
           node --check mcp/server.js
-          for f in lib/*.js tools/*.js; do node --check "$f"; done
+          node --check sdk/kg-client.mjs
+          for f in lib/*.js tools/*.js bin/*.js mcp/*.js; do node --check "$f"; done
       - name: 核心链路测试
         run: npm test

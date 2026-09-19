@@ -1,9 +1,8 @@
 #!/bin/sh
 # 本地知识图谱整合器一键启动（macOS / Linux / 通用）
-# 双击或终端运行：自动检查 Node 版本、首次自动装依赖、启动后打开浏览器
+# 双击或终端运行：自动检查 Node 版本、首次自动装依赖；服务就绪后自动打开浏览器
 cd "$(dirname "$0")" || exit 1
 echo "== 本地知识图谱整合器 =="
-URL="http://localhost:3000"
 
 # 1. Node.js 与 node:sqlite 检查
 if ! command -v node >/dev/null 2>&1; then
@@ -29,17 +28,11 @@ if ! node -e "require('express')" >/dev/null 2>&1; then
   }
 fi
 
-# 3. 启动服务并打开浏览器
-echo "启动服务中..."
+# 3. 启动服务：就绪后由服务端自动打开浏览器（感知真实端口）；关闭本窗口或 Ctrl+C 停止
+echo "启动服务中，就绪后将自动打开浏览器..."
+echo "提示：默认端口被占用时会自动顺延，访问地址以窗口内显示的为准。"
 node --no-warnings server.js &
 SERVER_PID=$!
-sleep 3
-if command -v open >/dev/null 2>&1; then
-  open "$URL"
-elif command -v xdg-open >/dev/null 2>&1; then
-  xdg-open "$URL" >/dev/null 2>&1 || true
-fi
-echo "服务已启动: $URL （关闭本窗口或按 Ctrl+C 停止服务）"
 trap 'kill $SERVER_PID 2>/dev/null' EXIT INT TERM
 wait $SERVER_PID
 echo "服务已退出，按回车关闭窗口"

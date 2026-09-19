@@ -55,7 +55,14 @@ kg
 | macOS | 双击 `start.command` |
 | Linux / 命令行 | `bash start.sh` 或 `npm start` |
 
-此模式数据存放在项目内 `data/` 目录。启动后浏览器访问 `http://localhost:3000`。依赖 Node.js >= 22.5；自然语言补全需要全局安装 `opencode` CLI（`npm i -g opencode-ai`），未安装时仅该功能降级，其余功能正常。
+此模式数据存放在项目内 `data/` 目录。依赖 Node.js >= 22.5；自然语言补全需要全局安装 `opencode` CLI（`npm i -g opencode-ai`），未安装时仅该功能降级，其余功能正常。
+
+**启动行为（所有方式通用）**：
+
+- 服务就绪后**自动打开浏览器**，无需手动输网址；设环境变量 `KG_NO_OPEN=1` 可禁止（`kg` 命令的 `--no-open` 参数同效）
+- 默认端口 3000 被其他程序占用时**自动顺延**（3000→3020 范围内），实际访问地址以启动窗口显示的为准
+- Windows 的 `start.bat` 为前台窗口：窗口即服务本体，关闭窗口（或 Ctrl+C）即停止服务
+- 首次打开网页会显示**新手引导**浮层（含 OpenCode 检测状态），之后可在「帮助」面板随时重新查看；完整文档可通过帮助面板在线打开（`/help`）
 
 ## API Key 配置（全部在界面上完成）
 
@@ -82,11 +89,42 @@ kg
 
 在 **MCP 页签** 开启"MCP 服务"后，外部 Agent（Claude Desktop、Cursor、Cline、opencode 等）即可通过标准 MCP 协议对本图谱做完整增删改查：
 
-- **HTTP 方式（推荐，支持远程 Agent）**：端点 `http://<主机>:3000/mcp`（Streamable HTTP，JSON 响应），启用后自动生成访问令牌，支持 `Authorization: Bearer` 头或 `?token=` 参数；界面提供三类客户端配置片段一键复制
+- **一键连接（推荐）**：MCP 页签开启服务后，复制"一键连接"命令直接粘贴到终端即可连接，令牌已内含、无需手动拼装：
+  - 通用接入 / 连通性测试：`npx -y mcp-remote http://localhost:3000/mcp --header "Authorization: Bearer <令牌>"`
+  - Claude Code 一步注册：`claude mcp add --transport http local-kg http://localhost:3000/mcp --header "Authorization: Bearer <令牌>"`
+  （界面上的命令已带真实令牌，复制即用）
+- **HTTP 方式（支持远程 Agent）**：端点 `http://<主机>:3000/mcp`（Streamable HTTP，JSON 响应），启用后自动生成访问令牌，支持 `Authorization: Bearer` 头或 `?token=` 参数；界面提供客户端配置 JSON 一键复制
 - **本机 stdio 方式（免令牌）**：客户端配置命令 `npx -y local-knowledge-graph --mcp`（或 `kg --mcp`）；数据目录默认 `~/.local-knowledge-graph`，可用 `KG_DATA_DIR` 环境变量指定
 - **工具集（12 个）**：查询类 kg_stats / kg_list_entities / kg_get_entity / kg_get_graph / kg_ego / kg_search / kg_cypher / kg_inference / kg_path / kg_digest / kg_export_rdf；写入类 kg_apply_ops（add/update/delete entity 与 relation，自动记操作日志 + Git 保存点）
 - **只读模式**：勾选后外部仅可查询；**令牌管理**：一键重新生成即刻吊销旧令牌
 - **实时同步**：图谱被任一写入方（页面、API、MCP、外部进程）修改后，网页 3 秒内自动刷新
+
+## SDK 程序化接入（不经 MCP）
+
+供**程序**（脚本、后端服务、Agent 的代码工具）直接调用图谱全部功能：零依赖 HTTP 客户端 `sdk/kg-client.mjs`，任何能发 HTTP 的语言也可直连。
+
+```js
+import { createClient } from 'local-knowledge-graph/sdk/kg-client.mjs';
+const kg = createClient();                  // 默认 http://localhost:3000
+await kg.applyOps([                          // 批量原子写入（推荐）
+  { op: 'add_entity', ref: 'A', name: '大雁塔', category: '物理实体' },
+  { op: 'add_relation', source_ref: 'A', target_name: '西安', name: '位于', category: '空间' },
+]);
+```
+
+完整说明（人类与 Agent 合读，含 API 一览、Agent 编程守则、多语言 HTTP 对照）：运行中的服务 `GET /sdk` 在线查看，或项目根目录 `SDK.md`。
+
+## CLI 命令行工具（kgctl，不经 MCP、无需服务运行）
+
+`kgctl` 提供 stats / get / list / search / cypher / ego / path / paths / inference / recommend 等只读查询，以及 add-entity / add-relation / ops（批量原子写入）/ export / savepoint / undo / restore 等写入命令：
+
+```bash
+kgctl add-entity 大雁塔 --category 物理实体 --attr '{"朝代":"唐"}' --alias 大慈恩寺塔
+kgctl add-relation 大雁塔 西安 --name 位于 --category 空间
+kgctl ego 大雁塔            # 中心层级子图
+```
+
+直接操作数据目录中的图谱数据库（无需网页服务运行；服务在运行时页面数秒内自动同步）。破坏性命令（delete-entity/undo/restore）必须显式 `--yes`。所有命令支持 `--json` 机读输出与统一退出码，适合脚本与 Agent。完整说明（人类与 Agent 合读）：`GET /cli` 在线查看，或项目根目录 `CLI.md`。
 
 ## 知识推理：现有功能与方法体系
 
@@ -165,6 +203,7 @@ kg
 
 ## 版本历史摘要
 
+- **v1.13.0**：程序化接入三件套——①**轻量 SDK**：零依赖 HTTP 客户端 `sdk/kg-client.mjs`（实体/关系/批量写入/图查询/保存点/导出/事件监听），新增 `POST /api/ops` 批量原子写入端点与实体详情路由，`/api/meta` 自动发现 SDK 入口，双读者文档 `SDK.md`（`GET /sdk`）②**CLI 工具集 `kgctl`**：stats/get/list/search/cypher/ego/path/paths/inference/recommend/history 只读查询 + add-entity/add-relation/update-entity/delete-entity/add-alias/ops 批量/export/savepoint/undo/restore 写入，`--json` 机读输出与统一退出码，无需服务运行直接读写数据目录，双读者文档 `CLI.md`（`GET /cli`）③**MCP 一键连接**：页签内置含令牌的 mcp-remote / Claude Code 一条命令，复制即连 ④启动体验：服务就绪后自动打开浏览器（`KG_NO_OPEN` 可禁），端口被占自动顺延（3000→3020），`start.bat` 改前台窗口（关窗即停），新增 `/help` 在线帮助文档
 - **v1.10.0**：关系推荐——共同邻居算法（Adamic-Adar 打分，排除已有直接边）全图/中心实体两种扫描；AI 判断候选关系（LLM 给出关系名/大类/置信度/依据，人工确认后入库，不直接写库）；检索页签新增"关系推荐"卡，实体信息卡新增"推荐关系"按钮
 - **v1.9.0**：检索配置增强（Base URL 页面可配 + 测试连接按钮，保存前即可验证密钥/地址/模型）；关系图片绑定（信息卡上传/缩略图/灯箱，佐证材料与关系绑定，删关系连带清理）；帮助文档全面增补（检索配置详解/关系编辑与图片/知识推理方法体系与应用场景）
 - **v1.8.0**：MCP 外部接入——设置新增 MCP 页签（服务开关/只读模式/令牌管理/三类客户端一键复制配置）；`/mcp` Streamable HTTP 端点（令牌鉴权+CORS，12 个工具含完整 CRUD）；`kg --mcp` 本机 stdio 接入；图谱变更实时同步（SSE 推送+跨进程探测，页面 3 秒内自动刷新）

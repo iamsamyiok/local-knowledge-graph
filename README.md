@@ -21,7 +21,9 @@
 | 迷你 Cypher | 只读关系查询：`MATCH (a)-[r:互动]->(b) WHERE a.name contains 郑和 RETURN a.name, r.name LIMIT 10` |
 | 数据资产 | 实体图片（本地存储，独立表）、RDF Turtle 导出、SQLite 整库导出/导入（自动备份保存点）、单文件只读网页另存 |
 | 保存点 | 每次合规写入自动打 Git 保存点，违规写入自动回滚到上个合规版本；可一键回溯任意历史版本 |
-| MCP Server | 零依赖 stdio JSON-RPC，10 个工具可直接接入 Claude Desktop / OpenCode 等支持 MCP 的客户端 |
+| MCP Server | 零依赖 stdio JSON-RPC + Streamable HTTP，一键连接命令接入 Claude Desktop / OpenCode 等支持 MCP 的客户端 |
+| **轻量 SDK** | 零依赖 HTTP 客户端（`sdk/kg-client.mjs`），程序/Agent 不经 MCP 直接调用全部功能；文档人类与 Agent 合读（`/sdk`） |
+| **CLI 工具集** | `kgctl` 多子命令（stats/get/list/search/cypher/ego/path/inference/ops/export...），无需服务运行即可读写图谱；文档（`/cli`） |
 | 双端适配 | 桌面端完整面板；手机端单行工具栏+抽屉面板+文件菜单 |
 
 ## 快速开始
@@ -35,9 +37,9 @@ npm i -g local-knowledge-graph
 kg
 ```
 
-一条命令安装，一条命令启动（自动打开浏览器）。数据保存在用户目录 `~/.local-knowledge-graph/`，升级（`kg` 内一键更新或 `npm i -g local-knowledge-graph@latest`）不影响数据。也可以免安装试用：`npx local-knowledge-graph`。
+一条命令安装，一条命令启动（服务就绪后自动打开浏览器）。数据保存在用户目录 `~/.local-knowledge-graph/`，升级（`kg` 内一键更新或 `npm i -g local-knowledge-graph@latest`）不影响数据。也可以免安装试用：`npx local-knowledge-graph`。
 
-启动参数：`kg --port 3000 --host 127.0.0.1 --data <目录> --no-open`（详见 `kg --help`）。
+启动参数：`kg --port 3000 --host 127.0.0.1 --data <目录> --no-open`（详见 `kg --help`）。`npm start` / `node server.js` 同样会在就绪后自动打开浏览器（环境变量 `KG_NO_OPEN=1` 禁止）；默认端口被占用时自动顺延（3000→3020），实际地址以启动窗口显示为准。
 
 ### 脚本启动（Git 克隆 / 开发模式）
 
@@ -47,7 +49,7 @@ kg
 | macOS | 双击 `start.command`（若提示无法打开：右键 → 打开；若提示无执行权限：终端执行一次 `chmod +x start.command start.sh`） |
 | Linux | `./start.sh`（首次可能需 `chmod +x start.sh`） |
 
-脚本自动完成：Node 版本检查 → 首次自动安装依赖（仅 express，几秒）→ 启动服务 → 自动打开浏览器 `http://localhost:3000`。此模式数据存放在项目内 `data/` 目录，应用内"一键更新"走 git 快进拉取。
+脚本自动完成：Node 版本检查 → 首次自动安装依赖（仅 express，几秒）→ 启动服务 → 就绪后自动打开浏览器。此模式数据存放在项目内 `data/` 目录，应用内"一键更新"走 git 快进拉取。Windows 下 `start.bat` 为前台窗口：窗口即服务本体，关闭窗口（或 Ctrl+C）即停止服务。
 
 ### 手动启动
 
@@ -73,7 +75,10 @@ lib/inference.js     OWL 推理引擎（虚拟推导，不写库）
 lib/embeddings.js    向量构建/检索（data/settings.json 存配置，已被 gitignore）
 lib/rdf.js           RDF Turtle 导出
 lib/viewer.js        单文件只读网页查看器生成
-mcp/server.js        MCP Server（stdio）
+mcp/server.js        MCP Server（stdio + Streamable HTTP）
+sdk/kg-client.mjs    轻量 SDK 客户端（零依赖 HTTP，程序/Agent 直连，不经 MCP）
+SDK.md               SDK 使用说明（人类与 Agent 合读；运行时 GET /sdk 在线查看）
+bin/kgctl.js         CLI 工具集（kgctl 多子命令；文档 CLI.md，运行时 GET /cli）
 tools/ego.js         中心层级查询 CLI（只读）
 public/index.html    单文件前端（无构建步骤）
 data/                kg.db、ontology.json、settings.json、uploads/（gitignore，不出仓库）
@@ -128,7 +133,17 @@ AI 回答中输出 ```kg-ops 代码块（JSON 数组）即可写库，全部操�
 
 ## MCP 接入
 
-`mcp/server.js` 零外部依赖，stdio 传输。以 Claude Desktop 为例（`claude_desktop_config.json`）：
+`mcp/server.js` 零外部依赖，stdio 传输；运行中的网页服务同时暴露 `/mcp` Streamable HTTP 端点（Bearer 令牌鉴权）。**MCP 页签开启服务后，界面提供"一键连接"命令（令牌已内含，复制粘贴到终端即可）**：
+
+```bash
+# 通用接入 / 连通性测试
+npx -y mcp-remote http://localhost:3000/mcp --header "Authorization: Bearer <令牌>"
+
+# Claude Code 一步注册
+claude mcp add --transport http local-kg http://localhost:3000/mcp --header "Authorization: Bearer <令牌>"
+```
+
+也可手动配置。以 Claude Desktop 为例（`claude_desktop_config.json`）：
 
 ```json
 {
@@ -142,7 +157,7 @@ AI 回答中输出 ```kg-ops 代码块（JSON 数组）即可写库，全部操�
 }
 ```
 
-工具列表：`kg_stats / kg_list_entities / kg_get_entity / kg_get_graph / kg_ego / kg_search / kg_cypher / kg_inference / kg_export_rdf / kg_apply_ops`。设 `KG_MCP_READONLY=1` 时拒绝全部写入。
+工具列表：`kg_stats / kg_list_entities / kg_get_entity / kg_get_graph / kg_ego / kg_search / kg_cypher / kg_inference / kg_path / kg_digest / kg_export_rdf / kg_apply_ops`。设 `KG_MCP_READONLY=1` 时拒绝全部写入。
 
 ## 向量检索配置
 

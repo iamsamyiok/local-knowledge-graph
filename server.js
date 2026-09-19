@@ -48,6 +48,31 @@ app.use(express.static(path.join(__dirname, 'public'), {
 }));
 app.use('/uploads', express.static(path.join(git.DATA_DIR, 'uploads')));
 
+// 在线帮助文档（项目内 HELP.md，浏览器直接查看）
+app.get('/help', (req, res) => {
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', 'inline; filename="HELP.md"');
+  res.sendFile(path.join(__dirname, 'HELP.md'));
+});
+
+// 轻量 SDK：说明文档（人类与 Agent 合读）与客户端脚本（零依赖 ESM）
+app.get('/sdk', (req, res) => {
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', 'inline; filename="SDK.md"');
+  res.sendFile(path.join(__dirname, 'SDK.md'));
+});
+app.get('/sdk/kg-client.mjs', (req, res) => {
+  res.type('text/javascript; charset=utf-8');
+  res.sendFile(path.join(__dirname, 'sdk', 'kg-client.mjs'));
+});
+
+// CLI 工具集说明（kgctl，人类与 Agent 合读）
+app.get('/cli', (req, res) => {
+  res.type('text/markdown; charset=utf-8');
+  res.setHeader('Content-Disposition', 'inline; filename="CLI.md"');
+  res.sendFile(path.join(__dirname, 'CLI.md'));
+});
+
 const api = express.Router();
 
 // ---------- 元信息 ----------
@@ -59,7 +84,33 @@ api.get('/meta', (req, res) => {
     version: db.getVersion(),
     agent_available: agentAvailable,
     agent_session: agentSessionInfo(),
+    sdk: { client: '/sdk/kg-client.mjs', docs: '/sdk', batch_write: 'POST /api/ops' },
   });
+});
+
+// ---------- 实体详情（含关系与别名） ----------
+api.get('/entities/:id', (req, res) => {
+  const id = Number(req.params.id);
+  const e = db.getEntity(id);
+  if (!e) return res.status(404).json({ error: `实体 id=${id} 不存在` });
+  const amap = db.aliasMap();
+  res.json({
+    entity: { ...e, aliases: amap[id] || [] },
+    relations: db.listRelations().filter((r) => r.source_id === id || r.target_id === id),
+  });
+});
+
+// ---------- SDK 批量原子写入（kg-ops 协议，与 MCP kg_apply_ops 同协议） ----------
+api.post('/ops', (req, res) => {
+  const ops = (req.body || {}).ops;
+  if (!Array.isArray(ops) || !ops.length) return res.status(400).json({ error: 'ops必须为非空JSON数组' });
+  try {
+    const applied = db.applyAgentOps(ops);
+    try { git.savepoint(`SDK写入: ${applied.length} 项操作`, 'SDK'); } catch (_) { /* 数据目录无git时忽略 */ }
+    res.json({ applied_count: applied.length, applied });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 function agentSessionInfo() {
@@ -881,7 +932,7 @@ function scheduleRestart() {
       const { spawn } = require('child_process');
       const log = fs.openSync(path.join(require('./lib/paths').DATA_DIR, 'restart.log'), 'a');
       const child = spawn(process.execPath, [...process.execArgv, path.join(__dirname, 'server.js')], {
-        detached: true, stdio: ['ignore', log, log], env: process.env, cwd: __dirname,
+        detached: true, stdio: ['ignore', log, log], env: { ...process.env, KG_NO_OPEN: '1' }, cwd: __dirname,
       });
       child.unref();
       console.log(`[更新] 新进程已启动 (pid ${child.pid})，当前进程即将退出`);
@@ -893,23 +944,60 @@ function scheduleRestart() {
   }, 3000);
 }
 
-// 端口绑定（更新重启衔接时旧进程尚未释放端口，自动重试）
+// 服务就绪后自动打开浏览器（KG_NO_OPEN=1 禁止；kg CLI 自己负责打开，会预设该变量）
+function openBrowserTab(url) {
+  try {
+    const { spawn } = require('child_process');
+    const cmds = process.platform === 'win32' ? [['cmd', ['/c', 'start', '', url]]]
+      : process.platform === 'darwin' ? [['open', [url]]]
+      : [['xdg-open', [url]]];
+    const [cmd, cargs] = cmds[0];
+    spawn(cmd, cargs, { detached: true, stdio: 'ignore' }).unref();
+  } catch (_) { /* 打不开就让用户手动访问窗口内地址 */ }
+}
+
+function announce(port, shifted) {
+  const url = `http://localhost:${port}`;
+  console.log('──────────────────────────────────────────────');
+  console.log(`  服务已就绪: ${url}`);
+  if (shifted) console.log(`  （默认端口 ${PORT} 被其他程序占用，已自动改用 ${port}）`);
+  console.log(`  监听 ${HOST}${HOST === '127.0.0.1' ? '（如需局域网访问设 KG_HOST=0.0.0.0）' : '（已暴露到局域网）'}`);
+  console.log('  数据文件: data/kg.db（本地Git仓库托管，可打保存点/回溯）');
+  console.log('  停止服务：关闭本窗口，或在此按 Ctrl+C');
+  console.log('  全流程本地运行，仅 OpenCode 可联网补全公开信息');
+  console.log('──────────────────────────────────────────────');
+  if (!process.env.KG_NO_OPEN) setTimeout(() => openBrowserTab(url), 400);
+}
+
+function tryListen(port, onOk, onFail) {
+  const server = app.listen(port, HOST, () => onOk(port));
+  server.on('error', (e) => onFail(e));
+}
+
+// 端口绑定：更新重启衔接时旧进程尚未释放端口，先原端口重试数次；
+// 确被其他程序长期占用则自动向上顺延，不再直接失败
 (function bind(attempt) {
-  const server = app.listen(PORT, HOST, () => {
-    console.log(`本地知识图谱整合器已启动: http://localhost:${PORT} (监听${HOST}${HOST === '127.0.0.1' ? '，如需局域网访问设 KG_HOST=0.0.0.0' : '，已暴露到局域网'})`);
-    console.log('数据文件: data/kg.db (本地Git仓库托管，可打保存点/回溯)');
-    console.log('全流程本地运行，仅OpenCode可联网补全公开信息');
-  });
-  server.on('error', (e) => {
-    if (e.code === 'EADDRINUSE' && attempt < 15) {
-      console.log(`端口 ${PORT} 被占用（可能为更新重启衔接），1秒后重试 (${attempt + 1}/15)`);
+  tryListen(PORT, (p) => announce(p, false), (e) => {
+    if (e.code === 'EADDRINUSE' && attempt < 5) {
+      console.log(`端口 ${PORT} 等待释放（可能为更新重启衔接），1秒后重试 (${attempt + 1}/5)`);
       setTimeout(() => bind(attempt + 1), 1000);
+    } else if (e.code === 'EADDRINUSE') {
+      console.log(`端口 ${PORT} 被其他程序占用，自动尝试相邻端口…`);
+      bindScan(PORT + 1);
     } else {
       console.error('监听失败:', e.message);
       process.exit(1);
     }
   });
 })(0);
+
+function bindScan(candidate) {
+  if (candidate > PORT + 20) {
+    console.error(`端口 ${PORT}~${PORT + 20} 均不可用，请用 --port 或环境变量 PORT 指定其他端口`);
+    process.exit(1);
+  }
+  tryListen(candidate, (p) => announce(p, true), () => bindScan(candidate + 1));
+}
 
 // ---------- 跨进程变更探测：外部进程（stdio MCP/CLI）写库时兜底广播 ----------
 let lastSignature = '';

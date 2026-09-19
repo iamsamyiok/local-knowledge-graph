@@ -55,36 +55,8 @@ if (dataDir) process.env.KG_DATA_DIR = dataDir;
 
 ensureLegacyMigration();
 
-// 启动后轮询就绪，自动打开浏览器
-if (!args.includes('--no-open')) {
-  const listenPort = Number(process.env.PORT || 3000);
-  const url = `http://localhost:${listenPort}`;
-  const started = Date.now();
-  const timer = setInterval(() => {
-    fetch(`${url}/api/version`, { signal: AbortSignal.timeout(1500) })
-      .then((r) => {
-        if (r.ok || Date.now() - started > 20000) {
-          clearInterval(timer);
-          if (r.ok) {
-            console.log(`已在浏览器打开 ${url}（如未弹出请手动访问）`);
-            openBrowser(url);
-          }
-        }
-      })
-      .catch(() => { if (Date.now() - started > 25000) clearInterval(timer); });
-  }, 800);
-}
-
-function openBrowser(url) {
-  const { spawn } = require('child_process');
-  const cmds = process.platform === 'win32' ? [['cmd', ['/c', 'start', '', url]]]
-    : process.platform === 'darwin' ? [['open', [url]]]
-    : [['xdg-open', [url]]];
-  try {
-    const [cmd, cargs] = cmds[0];
-    spawn(cmd, cargs, { detached: true, stdio: 'ignore' }).unref();
-  } catch (_) { /* 打不开就让用户手动访问 */ }
-}
+// 浏览器打开统一交给 server.js：端口绑定成功后执行，能感知端口顺延后的真实地址
+if (args.includes('--no-open')) process.env.KG_NO_OPEN = '1';
 
 require('../server.js');
 

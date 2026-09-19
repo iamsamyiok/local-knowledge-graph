@@ -197,10 +197,22 @@
               <button id="mcp-copy-token" title="复制令牌">复制</button>
               <button id="mcp-regen" title="重新生成后旧令牌立即失效">重新生成</button>
             </div>
-            <div class="hint-text">外部 Agent 凭令牌访问。令牌泄露时点击"重新生成"即刻吊销旧令牌。</div>
+            <div class="hint-text">一键连接命令已包含令牌，复制粘贴即可；令牌泄露时点击上方"重新生成"即刻吊销。stdio 方式（npx -y local-knowledge-graph --mcp）仅适合与本网页同机使用，数据目录默认 ~/.local-knowledge-graph，可用环境变量 KG_DATA_DIR 指定。</div>
 
-            <h3 style="margin-top:14px">客户端一键配置</h3>
-            <label>通用 Streamable HTTP（Cline / opencode / 通用 MCP 客户端）</label>
+            <h3 style="margin-top:14px">一键连接（令牌已内含，复制一条命令即可）</h3>
+            <label>通用接入：粘贴到任意终端即刻连接并验证（Cline / 通用 MCP 客户端均可用此命令注册）</label>
+            <div class="row" style="align-items:flex-start;gap:8px">
+              <pre id="mcp-snippet-quick" class="mcp-snippet"></pre>
+              <button id="mcp-copy-quick">复制</button>
+            </div>
+            <label>Claude Code：执行一条命令完成注册，立即可用</label>
+            <div class="row" style="align-items:flex-start;gap:8px">
+              <pre id="mcp-snippet-claude-code" class="mcp-snippet"></pre>
+              <button id="mcp-copy-claude">复制</button>
+            </div>
+
+            <h3 style="margin-top:14px">客户端配置文件（JSON，含令牌）</h3>
+            <label>通用 Streamable HTTP（URL 带令牌，Cline / opencode / 通用客户端）</label>
             <div class="row" style="align-items:flex-start;gap:8px">
               <pre id="mcp-snippet-http" class="mcp-snippet"></pre>
               <button id="mcp-copy-http">复制</button>
@@ -215,7 +227,7 @@
               <pre id="mcp-snippet-stdio" class="mcp-snippet"></pre>
               <button id="mcp-copy-stdio">复制</button>
             </div>
-            <div class="hint-text">stdio 方式命令：npx -y local-knowledge-graph --mcp（数据目录默认 ~/.local-knowledge-graph，可用环境变量 KG_DATA_DIR 指定其他目录）。远程 Agent 请使用 HTTP 方式并保管好令牌。</div>
+            <div class="hint-text">HTTP 方式适合所有客户端；stdio 免令牌但仅限本机。</div>
           </div>
           <div id="mcp-status" class="hint-text"></div>
         </div>
@@ -249,7 +261,9 @@
           <p class="hp-p">本地知识图谱整合器 —— 把文档与联网信息整理成可导航的 3D 知识图谱。全流程本地运行，数据存于本机 data/ 目录（独立 Git 仓库托管，可回溯）。</p>
           <h3>版本与更新</h3>
           <div id="help-upd"></div>
-          <div class="hp-line">详细帮助文档：项目目录下 <b>HELP.md</b></div>
+          <div class="hp-line">详细帮助文档：<a href="/help" target="_blank" rel="noopener">浏览器在线查看 HELP.md</a>（项目目录下）</div>
+          <div class="hp-line">程序化接入 SDK：<a href="/sdk" target="_blank" rel="noopener">SDK.md</a>（零依赖客户端 <code>/sdk/kg-client.mjs</code>，不经 MCP）</div>
+          <div class="hp-line">命令行工具：<a href="/cli" target="_blank" rel="noopener">CLI.md</a>（kgctl，无需服务运行即可读写图谱）</div>
           <div class="hp-line">发布记录：<a href="https://github.com/iamsamyiok/local-knowledge-graph/releases" target="_blank" rel="noopener">GitHub Releases</a></div>
           <h3>快速上手</h3>
           <ul class="hp-list">

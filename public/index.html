@@ -295,6 +295,14 @@
 
     <div class="panel right" id="panel-right">
       <div class="tabs"><div class="active" style="cursor:default">OpenCode 自然语言指令</div></div>
+      <div id="opencode-banner" style="display:none">
+        <div class="ob-line">未检测到 <b>OpenCode</b>：AI 对话建图与文档智能抽取不可用，其余功能不受影响。</div>
+        <div class="row" style="align-items:center">
+          <button class="primary" id="ob-install">一键安装</button>
+          <button class="ghost" id="ob-skip">稍后再说</button>
+          <span id="ob-status"></span>
+        </div>
+      </div>
       <div class="messages" id="messages">
         <div class="msg bot"><div class="who">系统</div><div class="bubble">输入自然语言指令（如"帮我联网查一下珠穆朗玛峰的海拔并建入图谱"）。OpenCode 将校验信息后提交操作，所有写入均需通过RDF规范校验。</div></div>
       </div>

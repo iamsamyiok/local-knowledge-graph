@@ -84,6 +84,7 @@ api.get('/meta', (req, res) => {
     version: db.getVersion(),
     agent_available: agentAvailable,
     agent_session: agentSessionInfo(),
+    git_available: gitAvailable,
     sdk: { client: '/sdk/kg-client.mjs', docs: '/sdk', batch_write: 'POST /api/ops' },
   });
 });
@@ -624,12 +625,21 @@ api.get('/export/html', (req, res) => {
 });
 
 // ---------- Git保存点与回溯 ----------
-api.get('/git/history', (req, res) => res.json(git.history(Number(req.query.limit) || 100)));
+function requireGit(res) {
+  if (!gitAvailable) {
+    res.status(503).json({ error: '未检测到 Git，保存点/回溯功能已禁用（安装 Git 后重启服务即可启用）' });
+    return false;
+  }
+  return true;
+}
+api.get('/git/history', (req, res) => { if (!requireGit(res)) return; res.json(git.history(Number(req.query.limit) || 100)); });
 api.post('/git/savepoint', (req, res) => {
+  if (!requireGit(res)) return;
   const r = git.savepoint(req.body && req.body.message, '手工');
   res.json(r);
 });
 api.post('/git/restore', (req, res) => {
+  if (!requireGit(res)) return;
   const hash = req.body && req.body.hash;
   if (!hash || typeof hash !== 'string') return res.status(400).json({ error: '必须提供要恢复的保存点hash' });
   const r = git.restore(hash.trim());
@@ -765,6 +775,34 @@ let docProgress = { active: false, stage: 'idle', chunk: 0, chunks: 0, mode: '',
 
 api.get('/agent/doc/progress', (req, res) => res.json(docProgress));
 
+// OpenCode 一键安装（便利功能：固定安装命令、无用户输入；本机单用户场景）
+let installingAgent = false;
+api.post('/agent/install', (req, res) => {
+  if (installingAgent) return res.status(429).json({ error: '已有安装任务进行中，请稍候' });
+  installingAgent = true;
+  let replied = false;
+  const reply = (payload) => { if (!replied) { replied = true; res.json(payload); } };
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const child = require('child_process').spawn(npmCmd, ['install', '-g', 'opencode-ai'], { shell: process.platform === 'win32' });
+  let tail = '';
+  const collect = (d) => { tail = (tail + d.toString()).slice(-2000); };
+  child.stdout.on('data', collect);
+  child.stderr.on('data', collect);
+  const timer = setTimeout(() => { try { child.kill(); } catch (_) {} }, 300000);
+  child.on('error', (e) => { installingAgent = false; clearTimeout(timer); reply({ ok: false, agent_available: false, message: '启动 npm 失败: ' + e.message, output: tail }); });
+  child.on('close', (code) => {
+    installingAgent = false;
+    clearTimeout(timer);
+    try { checkAgent(); } catch (_) {}
+    reply({
+      ok: code === 0 && agentAvailable,
+      agent_available: agentAvailable,
+      message: agentAvailable ? 'OpenCode 安装完成' : `安装未成功（退出码 ${code}），可手动执行 npm install -g opencode-ai 后刷新重试`,
+      output: tail,
+    });
+  });
+});
+
 api.post('/agent/doc', async (req, res) => {
   if (agentBusy) return res.status(429).json({ error: '已有AI任务执行中（问答或文档导入），请等待完成后再试' });
   const { filename, content_b64, instruction } = req.body || {};
@@ -865,20 +903,24 @@ app.use((err, req, res, next) => {
 
 // ---------- 启动流程：异常兜底 + 自动拉起OpenCode ----------
 let agentAvailable = false;
+let gitAvailable = false;
 
 function checkAgent() {
-  try {
-    require('child_process').execFileSync('opencode', ['--version'], { encoding: 'utf8', timeout: 15000 });
-    agentAvailable = true;
-  } catch (_) {
-    agentAvailable = false;
-  }
+  // force=true：一键安装完成后强制重新探测（Windows 解析包内 opencode.exe 绝对路径）
+  agentAvailable = !!agent.resolveOpencodeCommand(true);
 }
 
 function bootstrap() {
   require('./lib/paths').ensureLegacyMigration();
-  git.ensureRepo();
-  git.backupCopy(true); // 启动时强制留一份滚动副本，目录损坏时仍有外部备份可救
+  // Git 缺失时优雅降级：保存点/回溯禁用，其余功能正常（exe 分发场景常见）
+  try {
+    git.ensureRepo();
+    git.backupCopy(true); // 启动时强制留一份滚动副本，目录损坏时仍有外部备份可救
+    gitAvailable = true;
+  } catch (e) {
+    gitAvailable = false;
+    console.error('[保存点] 未检测到可用 Git：保存点/回溯功能已禁用，其余功能不受影响（' + String(e.message || e).split('\n')[0] + '）');
+  }
   try {
     db.open();
   } catch (e) {
@@ -916,8 +958,8 @@ function seedIfEmpty() {
   db.addRelation({ source_id: beer.id, target_id: country.id, name: '流经', category: '空间' }, '手工');
   db.addRelation({ source_id: users.id, target_id: commerce.id, name: '推动发展', category: '互动' }, '手工');
   db.addRelation({ source_id: commerce.id, target_id: year.id, name: '成熟于', category: '时间' }, '手工');
-  git.savepoint('初始化：数据库与示例数据', '系统');
-  console.log('[初始化] 完成，已创建首个Git保存点');
+  try { git.savepoint('初始化：数据库与示例数据', '系统'); console.log('[初始化] 完成，已创建首个Git保存点'); }
+  catch (_) { console.log('[初始化] 完成（未检测到 Git，跳过保存点）'); }
 }
 
 bootstrap();

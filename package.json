@@ -1,6 +1,6 @@
 {
   "name": "local-knowledge-graph",
-  "version": "1.13.0",
+  "version": "1.14.0",
   "description": "本地知识图谱整合器：3D可视化 + AI对话建图 + 智能检索 + Git回溯 + RDF合规，全流程本地运行",
   "main": "server.js",
   "bin": {
@@ -23,6 +23,17 @@
   ],
   "engines": {
     "node": ">=22.5"
+  },
+  "pkg": {
+    "assets": [
+      "public/**/*",
+      "lib/viewer_template.html",
+      "HELP.md",
+      "SDK.md",
+      "CLI.md",
+      ".opencode/**/*"
+    ],
+    "outputPath": "dist"
   },
   "scripts": {
     "start": "node --no-warnings server.js",

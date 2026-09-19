@@ -203,6 +203,7 @@ kgctl ego 大雁塔            # 中心层级子图
 
 ## 版本历史摘要
 
+- **v1.14.0**：①AI 面板 OpenCode 未安装时提供**一键安装**（后端代跑 `npm i -g opencode-ai`，装完自动重新检测，无需开终端）②**Git 缺失优雅降级**：无 Git 环境启动不再失败，保存点/回溯自动禁用并明确提示（`/api/meta` 新增 `git_available`）③**三平台单文件可执行**：打 tag 后 Actions 自动构建 Windows/Linux/macOS 二进制并附到 Release（`kg serve|mcp|kgctl` 三合一入口，@yao-pkg/pkg 打包，约 50–120MB）
 - **v1.13.0**：程序化接入三件套——①**轻量 SDK**：零依赖 HTTP 客户端 `sdk/kg-client.mjs`（实体/关系/批量写入/图查询/保存点/导出/事件监听），新增 `POST /api/ops` 批量原子写入端点与实体详情路由，`/api/meta` 自动发现 SDK 入口，双读者文档 `SDK.md`（`GET /sdk`）②**CLI 工具集 `kgctl`**：stats/get/list/search/cypher/ego/path/paths/inference/recommend/history 只读查询 + add-entity/add-relation/update-entity/delete-entity/add-alias/ops 批量/export/savepoint/undo/restore 写入，`--json` 机读输出与统一退出码，无需服务运行直接读写数据目录，双读者文档 `CLI.md`（`GET /cli`）③**MCP 一键连接**：页签内置含令牌的 mcp-remote / Claude Code 一条命令，复制即连 ④启动体验：服务就绪后自动打开浏览器（`KG_NO_OPEN` 可禁），端口被占自动顺延（3000→3020），`start.bat` 改前台窗口（关窗即停），新增 `/help` 在线帮助文档
 - **v1.10.0**：关系推荐——共同邻居算法（Adamic-Adar 打分，排除已有直接边）全图/中心实体两种扫描；AI 判断候选关系（LLM 给出关系名/大类/置信度/依据，人工确认后入库，不直接写库）；检索页签新增"关系推荐"卡，实体信息卡新增"推荐关系"按钮
 - **v1.9.0**：检索配置增强（Base URL 页面可配 + 测试连接按钮，保存前即可验证密钥/地址/模型）；关系图片绑定（信息卡上传/缩略图/灯箱，佐证材料与关系绑定，删关系连带清理）；帮助文档全面增补（检索配置详解/关系编辑与图片/知识推理方法体系与应用场景）

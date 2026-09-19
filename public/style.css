@@ -513,3 +513,16 @@ html[data-theme="light"] .p-head2 { color: #1a5dc8; }
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 html[data-theme="light"] .mcp-snippet { background: #f4f7fc; color: #33445e; border-color: #d8e2f0; }
+
+  /* ================= OpenCode 一键安装横幅 ================= */
+  #opencode-banner {
+    margin: 10px; padding: 10px 12px; border-radius: 8px;
+    background: #241708; border: 1px solid #f0883e55;
+  }
+  .ob-line { font-size: 12px; color: #d7dee9; line-height: 1.7; margin-bottom: 8px; }
+  .ob-line b { color: #f0883e; }
+  #opencode-banner .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  #ob-status { font-size: 11px; color: #8fa3c0; }
+
+  html[data-theme="light"] #opencode-banner { background: #fdf3e7; border-color: #d99a3a55; }
+  html[data-theme="light"] .ob-line b { color: #9a5b0a; }

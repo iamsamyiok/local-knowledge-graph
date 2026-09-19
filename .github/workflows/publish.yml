@@ -45,3 +45,31 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REF_NAME: ${{ github.ref_name }}
         run: gh release create "$REF_NAME" --verify-tag --generate-notes --title "$REF_NAME"
+
+  build-binaries:
+    needs: publish # Release 由 publish 任务创建后，再把可执行文件附上去
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 安装依赖
+        run: npm install --no-audit --no-fund
+
+      - name: 打包三平台单文件可执行（serve|mcp|kgctl 三合一入口）
+        run: |
+          npx --yes @yao-pkg/pkg bin/exe.js --config package.json --targets node22-win-x64     --output dist/kg-windows-x64.exe
+          npx --yes @yao-pkg/pkg bin/exe.js --config package.json --targets node22-linux-x64   --output dist/kg-linux-x64
+          npx --yes @yao-pkg/pkg bin/exe.js --config package.json --targets node22-macos-arm64 --output dist/kg-macos-arm64
+          npx --yes @yao-pkg/pkg bin/exe.js --config package.json --targets node22-macos-x64   --output dist/kg-macos-x64
+
+      - name: 上传到 Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ github.ref_name }}
+        run: gh release upload "$REF_NAME" dist/kg-* --clobber

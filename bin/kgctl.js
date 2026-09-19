@@ -483,6 +483,10 @@ async function main() {
   await fn(pos, o);
 }
 
-main()
-  .then(() => { try { db.close(); } catch (_) {} process.exit(0); })
-  .catch((e) => { try { db.close(); } catch (_) {} die(e); });
+// 直接执行时运行；被单文件可执行入口（bin/exe.js）require 时由其调度
+if (require.main === module) {
+  main()
+    .then(() => { try { db.close(); } catch (_) {} process.exit(0); })
+    .catch((e) => { try { db.close(); } catch (_) {} die(e); });
+}
+module.exports = { main, die };

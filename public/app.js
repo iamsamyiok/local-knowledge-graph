@@ -2031,6 +2031,41 @@ $('help-close').addEventListener('click', () => {
   $('info-card').style.display = '';
 });
 
+/* ================= OpenCode 一键安装 ================= */
+function pushSystemNote(text) {
+  const div = document.createElement('div');
+  div.className = 'msg bot';
+  div.innerHTML = '<div class="who">系统</div><div class="bubble"></div>';
+  div.querySelector('.bubble').textContent = text;
+  $('messages').prepend(div);
+}
+$('ob-install').addEventListener('click', async () => {
+  const btn = $('ob-install'), st = $('ob-status');
+  btn.disabled = true;
+  st.textContent = '正在通过 npm 全局安装 opencode-ai（约 1–3 分钟）…';
+  try {
+    const r = await api('/api/agent/install', { method: 'POST' });
+    if (r.agent_available) {
+      st.textContent = '✓ 安装完成';
+      toast('OpenCode 安装完成，AI 面板已就绪');
+      pushSystemNote('OpenCode 已一键安装就绪。若首次使用 AI 报模型未配置，请在终端执行 opencode auth login 完成登录。');
+      try { sessionStorage.removeItem('ob_banner_dismissed'); } catch (_) {}
+      await refreshAll();
+    } else {
+      btn.disabled = false;
+      st.textContent = r.message || '安装失败，可手动执行 npm install -g opencode-ai';
+      toast(r.message || '安装失败', true);
+    }
+  } catch (e) {
+    btn.disabled = false;
+    st.textContent = '安装失败: ' + e.message;
+  }
+});
+$('ob-skip').addEventListener('click', () => {
+  try { sessionStorage.setItem('ob_banner_dismissed', '1'); } catch (_) {}
+  $('opencode-banner').style.display = 'none';
+});
+
 /* ================= 文件菜单（手机端：打开/保存/另存/网页版） ================= */
 $('m-file').addEventListener('click', (e) => {
   e.stopPropagation();
@@ -2131,6 +2166,11 @@ async function refreshAll(rebuild = true) {
   const badge = $('agent-badge');
   if (meta.agent_available) { badge.textContent = 'OpenCode 已就绪'; badge.className = 'badge ok'; }
   else { badge.textContent = 'OpenCode 未安装'; badge.className = 'badge off'; }
+  // AI 面板：未安装 OpenCode 时显示一键安装横幅（本会话内可"稍后再说"）
+  const banner = $('opencode-banner');
+  let dismissed = false;
+  try { dismissed = sessionStorage.getItem('ob_banner_dismissed') === '1'; } catch (_) {}
+  banner.style.display = (!meta.agent_available && !dismissed) ? '' : 'none';
   refreshEntityOptions();
   rebuildGraph();
   renderEntityList();
